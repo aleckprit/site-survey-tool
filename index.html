@@ -85,7 +85,14 @@ input[type=number]{font-variant-numeric:tabular-nums}
 .pblock{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px}
 .phead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .stage{position:relative;container-type:inline-size;width:100%;background:#000;border-radius:6px;overflow:hidden;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
-.stage img{display:block;width:100%;height:100%;pointer-events:none;-webkit-user-drag:none}
+.stage img{position:absolute;display:block;pointer-events:none;-webkit-user-drag:none}
+.stage.out{background:#e9eef1}
+.stage.out img{box-shadow:0 0 0 1px #c3cdd3,0 2px 8px rgba(0,0,0,.18)}
+.stage.draw{cursor:crosshair;touch-action:none;outline:2px solid #2aa4de}
+.ah{position:absolute;width:28px;height:28px;border-radius:50%;background:rgba(42,164,222,.35);border:2px solid #fff;touch-action:none;z-index:4;cursor:grab}
+.ah.mid{background:rgba(255,255,255,.25);border-color:rgba(255,255,255,.85)}
+.ah.mid.sel{background:rgba(42,164,222,.5)}
+.ah.hd{background:#2aa4de}
 .arrows{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
 .mk{position:absolute;border-style:solid;border-color:#e5261f;background:rgba(229,38,31,.12);cursor:grab;touch-action:none}
 .mk::before{content:'';position:absolute;inset:-10px}
@@ -286,6 +293,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const workLine = w => `${w.target || ''}${w.how || ''}`.trim();
 const cleanWorks = p => (p.works || []).filter(w => workLine(w));
 const CLIENTS = [{ g: '台固', n: '永佳樂有線電視' }, { g: '台固', n: '紅樹林有線電視' }, { g: '凱擘', n: '全聯有線電視' }, { g: '凱擘', n: '新唐城有線電視' }];
+const fullAddr = st => { const a = (st.address || '').trim(), c = st.city || '', d = st.dist || ''; return (a.startsWith(c) ? '' : c) + (d && !a.includes(d) ? d : '') + a; };
 const lockQty = p => (p.lockSt === 'add' ? (p.locks || 0) : 0);
 const irQty = p => (p.irSt === 'add' ? (p.ir || 0) : 0);
 function pendingItems(p) {
@@ -303,7 +311,13 @@ function pendingItems(p) {
     if (p.qr && !hasMark(/QR/i)) r.push('QR 掃碼機:照片上還沒標註安裝位置');
     if (p.lockSt === 'add' && !hasMark(/陽極鎖|外掛盒/)) r.push('陽極鎖+外掛盒:照片上還沒標註安裝位置');
     if (p.irSt === 'add' && !hasMark(/紅外線|感應開關|開門/)) r.push('開門開關:照片上還沒標註安裝位置');
-  } else if (!(p.photos || []).some(ph => (ph.marks || []).length)) r.push(p.kind === 'meter' ? '電表:照片上還沒標註安裝位置/控制範圍' : '控制器:照片上還沒標註安裝位置/控制設備');
+    const ds = (p.photos || []).map(x => x.dir);
+    if ((p.photos || []).length) {
+      if (!ds.includes('out') && !ds.includes('in')) r.push('門的照片請標示拍攝方向(門外往內/門內往外),門的兩側都要拍');
+      else if (!ds.includes('in')) r.push('已有門外往內的照片,請再補一張門內往外拍的');
+      else if (!ds.includes('out')) r.push('已有門內往外的照片,請再補一張門外往內拍的');
+    }
+  } else if (!(p.photos || []).some(ph => (ph.marks || []).length || (ph.arrows || []).length)) r.push(p.kind === 'meter' ? '電表:照片上還沒標註安裝位置/控制範圍' : '控制器:照片上還沒標註安裝位置/控制設備');
   if (p.kind !== 'door' && !(p.box || '').trim()) r.push('電箱位置沒填');
   if (p.kind === 'switch' && /冷氣/.test(p.target || '') && !(p.units > 0)) r.push('冷氣台數沒填(並建議拍冷氣本體)');
   if (p.kind === 'meter' && /\d/.test(p.note || '') && p.count < Math.max(...(p.note.match(/\d+/g) || [0]).map(Number))) r.push(`備註提到數字(${p.note}),但數量是 ${p.count},請確認`);
@@ -311,17 +325,16 @@ function pendingItems(p) {
   return r;
 }
 function isQr(p) { return p.kind === 'door' && !!(p.qr || (p.photos || []).some(ph => (ph.marks || []).some(m => /QR/i.test(m.text || '')))); }
-function hasAssess(p) { return !!(p.verdict || cleanWorks(p).length || (p.days || 0) > 0 || (p.mats || []).length || (p.link || '').trim()); }
+function hasAssess(p) { return !!(p.verdict || cleanWorks(p).length || (p.mats || []).length || (p.link || '').trim()); }
 function howChips(p) {
   const eq = p.kind === 'meter' ? [`增設${p.phase}電源控制電表`] : p.kind === 'switch' ? ['增設電源開關控制器'] : ['增設陽極鎖+外掛盒', '增設紅外線感應開關', '增設 QR 掃碼機', '增設電源開關控制器'];
   return [...HOW_SRC, '增設', ...eq, ...HOW_COND];
 }
 function computeBuild(S) {
-  const pd = S.points.reduce((a, p) => a + (p.days || 0), 0);
   const crew = Math.max(1, Number(S.site.crew) || 2);
-  const auto = pd > 0 ? Math.ceil(pd / crew * 2) / 2 : 0;
   const ov = S.site.daysOverride;
-  const days = ov !== null && ov !== undefined && ov !== '' && !isNaN(Number(ov)) ? Number(ov) : auto;
+  const days = ov !== null && ov !== undefined && ov !== '' && !isNaN(Number(ov)) && Number(ov) > 0 ? Number(ov) : 0;
+  const pd = days * crew, auto = 0;
   const m = {};
   S.points.forEach((p, i) => (p.mats || []).forEach(x => { const o = m[x.n] || (m[x.n] = { n: x.n, q: 0, pts: [] }); o.q += x.q; o.pts.push(p.loc || `點位${i + 1}`); }));
   return { pd, crew, auto, days, mats: Object.values(m), any: S.points.some(hasAssess) };
@@ -431,7 +444,6 @@ function computeBom(S) {
     ['戶外防水殼', mat('戶外防水殼') ? mat('戶外防水殼').q : 0, mat('戶外防水殼') ? [...new Set(mat('戶外防水殼').pts)].join('、') : ''],
     ['電源開關控制器', t.sw, '']];
   B.mats.filter(m => m.n !== '戶外防水殼').forEach(m => rows.push([m.n, m.q, [...new Set(m.pts)].join('、')]));
-  rows.push(['安裝天數', B.days || 0, B.pd > 0 ? `${B.crew} 人施工,合計 ${B.pd} 人天` : '']);
   return rows;
 }
 function pointChips(p) {
@@ -450,9 +462,18 @@ function fitRects(p) {
   const cw = (aw - gap * (n - 1)) / n;
   return p.photos.map((ph, i) => {
     const s = Math.min((cw - 2 * pad) / ph.w, (ah - 2 * pad) / ph.h), w = ph.w * s, h = ph.h * s;
-    return { x: ax + i * (cw + gap) + (cw - w) / 2, y: ay + pad, w, h, pad };
+    const cl = ax + i * (cw + gap);
+    return { x: cl + (cw - w) / 2, y: ay + pad, w, h, pad, cl, cr: cl + cw, cb: ay + ah };
   });
 }
+
+// 照片外可擺放標籤的空間(英吋),上限避免手機編輯畫面照片變太小
+function photoMargins(r) {
+  if (!r) return { ml: 0, mr: 0, mt: 0, mb: 0 };
+  return { ml: clamp(r.x - r.pad - r.cl - .03, 0, 1.7), mr: clamp(r.cr - (r.x + r.w + r.pad) - .03, 0, 1.7), mt: 0, mb: clamp(r.cb - (r.y + r.h + r.pad) - .03, 0, .5) };
+}
+const DIR_LABEL = { out: '門外往內拍', in: '門內往外拍' };
+const ARROW_COL = { w: 'FFFFFF', r: 'E5261F', y: 'FFD21F' };
 
 function textW(t) {
   let w = 0;
@@ -483,13 +504,16 @@ function arrowBetween(L, box) {
 }
 
 // 一張照片上所有標記的方框、標籤、箭頭、說明與提醒框;座標皆為相對照片左上角的英吋
-function layoutPhoto(ph, W, H, alertText) {
+function layoutPhoto(ph, W, H, alertText, G) {
+  G = G || { ml: 0, mr: 0, mt: 0, mb: 0 };
+  const minX = -G.ml, maxX = W + G.mr, minY = -G.mt, maxY = H + G.mb;
   const byId = {}; ph.marks.forEach(m => byId[m.id] = m);
   const boxOf = m => ({ x: m.x * W, y: m.y * H, w: m.w * W, h: m.h * H });
   const out = {};
   ph.marks.forEach(m => out[m.id] = { box: boxOf(m), label: null, arrows: [] });
   const extra = {};
   if (ph.caption) { const z = labelSize(ph.caption, W); extra.caption = { x: .08, y: H - z.h - .08, w: z.w, h: z.h, lines: z.lines }; }
+  if (DIR_LABEL[ph.dir]) { const z = labelSize(DIR_LABEL[ph.dir], W); extra.dir = { x: W - z.w - .08, y: .08, w: z.w, h: z.h, lines: z.lines }; }
   if (alertText) { const z = labelSize(alertText, W); extra.alert = { x: .1, y: .1, w: z.w, h: z.h, lines: z.lines }; }
   const ov = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
   const placed = [];
@@ -504,7 +528,7 @@ function layoutPhoto(ph, W, H, alertText) {
     const sz = labelSize(m.text, W);
     const item = { m, boxes, ux, ux2, uy, uy2, sz };
     if (m.lx != null) {
-      const L = { x: clamp(m.lx * W - sz.w / 2, 0, W - sz.w), y: clamp(m.ly * H - sz.h / 2, 0, H - sz.h), w: sz.w, h: sz.h, lines: sz.lines };
+      const L = { x: clamp(m.lx * W - sz.w / 2, minX, maxX - sz.w), y: clamp(m.ly * H - sz.h / 2, minY, maxY - sz.h), w: sz.w, h: sz.h, lines: sz.lines };
       out[m.id].label = L; out[m.id].arrows = boxes.map(b => arrowBetween(L, b)).filter(Boolean); placed.push(L);
     } else todo.push(item);
   });
@@ -523,9 +547,22 @@ function layoutPhoto(ph, W, H, alertText) {
       });
     });
     cand.push({ x: cx0 - sz.w / 2, y: .08 }, { x: cx0 - sz.w / 2, y: H - sz.h - .08 });
+    // 照片外的空白處(優先,不遮到原本的照片)
+    [0, -.8, .8].forEach(k => {
+      const y = cy0 + k * sz.h - sz.h / 2;
+      const chars = [...it.m.text.replace(/\n/g, '')];
+      const two = chars.length >= 6 && !it.m.text.includes('\n') ? (() => { const mid = Math.ceil(chars.length / 2), ls = [chars.slice(0, mid).join(''), chars.slice(mid).join('')]; return { lines: ls, w: Math.max(...ls.map(textW)) + .2, h: 2 * FONT_IN * 1.35 + .1 }; })() : null;
+      [sz, two].filter(Boolean).forEach(z => {
+        const yy = cy0 + k * z.h - z.h / 2;
+        if (G.ml >= z.w + .08) cand.push({ x: -z.w - .06, y: yy, sz: z });
+        if (G.mr >= z.w + .08) cand.push({ x: W + .06, y: yy, sz: z });
+      });
+    });
+    if (G.mb >= sz.h + .06) [0, -.6, .6].forEach(k => cand.push({ x: cx0 + k * sz.w - sz.w / 2, y: H + .05 }));
     let best = null;
     cand.forEach(c => {
-      const L = { x: clamp(c.x, 0, W - sz.w), y: clamp(c.y, 0, H - sz.h), w: sz.w, h: sz.h };
+      const z = c.sz || sz;
+      const L = { x: clamp(c.x, minX, maxX - z.w), y: clamp(c.y, minY, maxY - z.h), w: z.w, h: z.h, lines: z.lines };
       let sc = (Math.abs(L.x - c.x) + Math.abs(L.y - c.y)) * 40;
       placed.forEach(q => { sc += ov(L, q) * 4000; });
       markBoxes.forEach(q => { sc += ov(L, q) * 1500; });
@@ -533,10 +570,10 @@ function layoutPhoto(ph, W, H, alertText) {
       const dx = Math.max(0, Math.max(it.ux - (L.x + L.w), L.x - it.ux2)), dy = Math.max(0, Math.max(it.uy - (L.y + L.h), L.y - it.uy2));
       sc += Math.hypot(dx, dy) * 3;
       const edge = Math.min(L.x, W - L.x - L.w, L.y, H - L.y - L.h);
-      sc += edge * 1.2;
+      sc += Math.max(0, edge) * 1.2 + (ov(L, { x: 0, y: 0, w: W, h: H }) / (L.w * L.h)) * 22;
       if (!best || sc < best.sc) best = { sc, L };
     });
-    const L = { ...best.L, lines: sz.lines };
+    const L = { ...best.L, lines: best.L.lines || sz.lines };
     out[it.m.id].label = L; out[it.m.id].arrows = it.boxes.map(b => arrowBetween(L, b)).filter(Boolean); placed.push(L);
   });
   return { marks: out, extra };
@@ -572,7 +609,8 @@ async function buildPptx(S, A) {
   const eqR = 2 + T.rows.reduce((a, r) => a + Math.max(1, r.door.length, r.sw.length, r.p2.length, r.p3.length), 0), bR = BOMR.length + 1;
   const mRow = Math.min(.3, 3.6 / (eqR + bR)), merge = mRow >= .21;
   const cs = mRow >= .28 ? 11 : mRow >= .26 ? 10.5 : mRow >= .24 ? 10 : mRow >= .22 ? 9.5 : 9;
-  const total = (merge ? 2 : 4) + assessChunks.length + matChunks.length + S.points.length;
+  const daysOnly = B.days > 0 && !assessChunks.length;
+  const total = (merge ? 2 : 4) + (daysOnly ? 1 : 0) + assessChunks.length + matChunks.length + S.points.length;
   let pageNo = 0;
   const LM = .6, RM = 12.73, CW = RM - LM;
   const T0 = { fontFace: FONT, margin: 0 };
@@ -592,7 +630,7 @@ async function buildPptx(S, A) {
   };
   const daysChip = (sl) => {
     if (!(B.days > 0)) return;
-    sl.addText([{ text: '預估安裝天數　', options: { fontSize: 11, color: ACCENT } }, { text: `${B.days} 天`, options: { fontSize: 18, bold: true, color: NAVY, breakLine: true } }, { text: B.pd > 0 ? `${B.crew} 人施工 · 合計 ${B.pd} 人天` : '依人工評估', options: { fontSize: 10, color: MUTED } }],
+    sl.addText([{ text: '整體預估安裝天數　', options: { fontSize: 11, color: ACCENT } }, { text: `${B.days} 天`, options: { fontSize: 18, bold: true, color: NAVY, breakLine: true } }, { text: B.pd > 0 ? `${B.crew} 人施工 · 合計 ${B.pd} 人天` : '依人工評估', options: { fontSize: 10, color: MUTED } }],
       { x: 7.0, y: .3, w: 3.85, h: .82, fontFace: FONT, margin: [0, 12, 0, 12], valign: 'middle', shape: pptx.ShapeType.roundRect, rectRadius: .08, fill: { color: TINT }, line: { type: 'none' } });
   };
   const rule = (s, y) => s.addShape(pptx.ShapeType.line, { x: LM, y, w: CW, h: 0, line: { color: HAIR, width: .75 } });
@@ -613,7 +651,7 @@ async function buildPptx(S, A) {
     s.addText('場勘評估報告', { ...T0, x: LM, y: .98, w: 5, h: .26, fontSize: 11, bold: true, color: ACCENT, charSpacing: 4 });
     s.addText(S.site.name || '(案名)', { ...T0, x: LM, y: 1.24, w: w0, h: .6, fontSize: 28, bold: true, color: NAVY, valign: 'middle', fit: 'shrink' });
     const metaRuns = [];
-    [['客戶', S.site.client], ['地址', S.site.address], ['場勘日期', date]].filter(r => r[1]).forEach((r, i) => { if (i) metaRuns.push({ text: '　　', options: { fontSize: 12 } }); metaRuns.push({ text: r[0] + '  ', options: { color: MUTED, fontSize: 10 } }); metaRuns.push({ text: r[1], options: { color: INK, fontSize: 12 } }); });
+    [['客戶', S.site.client], ['地址', fullAddr(S.site)], ['場勘日期', date]].filter(r => r[1]).forEach((r, i) => { if (i) metaRuns.push({ text: '　　', options: { fontSize: 12 } }); metaRuns.push({ text: r[0] + '  ', options: { color: MUTED, fontSize: 10 } }); metaRuns.push({ text: r[1], options: { color: INK, fontSize: 12 } }); });
     if (metaRuns.length) s.addText(metaRuns, { ...T0, x: LM, y: 1.88, w: w0, h: .3, valign: 'middle', fit: 'shrink' });
     s.addShape(pptx.ShapeType.line, { x: LM, y: 2.28, w: w0, h: 0, line: { color: HAIR, width: .75 } });
   } else {
@@ -623,7 +661,7 @@ async function buildPptx(S, A) {
   const nameH = nameLines * .62 + .1, ruleY = 2.75 + nameH + .3;
   s.addText(S.site.name || '(案名)', { ...T0, x: LM + .1, y: 2.75, w: 6.8, h: nameH, fontSize: 36, bold: true, color: NAVY, valign: 'top' });
   s.addShape(pptx.ShapeType.line, { x: LM + .1, y: ruleY, w: 6.6, h: 0, line: { color: HAIR, width: .75 } });
-  [['客戶', S.site.client], ['地址', S.site.address], ['場勘日期', date]].filter(r => r[1]).forEach((r, i) => {
+  [['客戶', S.site.client], ['地址', fullAddr(S.site)], ['場勘日期', date]].filter(r => r[1]).forEach((r, i) => {
     s.addText(r[0], { ...T0, x: LM + .1, y: ruleY + .25 + i * .55, w: 1.3, h: .35, fontSize: 12, color: MUTED, valign: 'middle' });
     s.addText(r[1], { ...T0, x: LM + 1.5, y: ruleY + .25 + i * .55, w: 5.6, h: .35, fontSize: 16, color: INK, valign: 'middle' });
   });
@@ -676,7 +714,7 @@ async function buildPptx(S, A) {
     cv.addText(NOTE1, { ...T0, x: LM, y: Math.min(7.0, y1 + .3 + bR * mRow + .06), w: w0, h: .2, fontSize: 9, color: MUTED });
     sz = keepSz;
   } else {
-  s = pptx.addSlide(); header(s, '場勘摘要', '設備清單'); rule(s, 1.5); footer(s); daysChip(s);
+  s = pptx.addSlide(); header(s, '場勘摘要', '設備清單'); rule(s, 1.5); footer(s);
   s.addTable(tableRows(false), { ...tblOpts, x: LM, y: 1.8, w: CW, colW: [2.4, 2.1, 2.0, 1.9, 1.9, 1.83] });
   note(s, NOTE1, 6.8);
 
@@ -704,7 +742,7 @@ async function buildPptx(S, A) {
     const sl = pptx.addSlide();
     header(sl, '施工評估', ci ? '施工評估總表(續)' : '施工評估總表'); rule(sl, 1.5); footer(sl);
     if (ci === 0) daysChip(sl);
-    const rows = [[head('位置', 'left'), head('可否施工'), head('施工方式', 'left'), head('附屬耗材', 'left'), head('人天')]];
+    const rows = [[head('位置', 'left'), head('可否施工'), head('施工方式', 'left'), head('附屬耗材', 'left')]];
     chunk.forEach(({ p, i }) => {
       const works = cleanWorks(p), link = (p.link || '').trim().replace(/\n/g, ' ');
       const wtxt = works.map((w, k) => ({ text: workLine(w), options: { color: INK, fontSize: 11, breakLine: k < works.length - 1 || !!link } }));
@@ -714,17 +752,12 @@ async function buildPptx(S, A) {
         { text: [{ text: p.loc || `點位${i + 1}`, options: { bold: true, color: NAVY, fontSize: 12, breakLine: true } }, { text: KIND_NAME[p.kind], options: { color: MUTED, fontSize: 10 } }], options: { align: 'left', valign: 'middle', border: bd(true) } },
         vcell(p),
         { text: wtxt.length ? wtxt : '–', options: { align: 'left', valign: 'middle', border: bd(true), color: GHOST } },
-        { text: mtxt.length ? mtxt : '–', options: { align: 'left', valign: 'middle', border: bd(true), color: GHOST } },
-        { text: p.days > 0 ? String(p.days) : '–', options: { align: 'center', valign: 'middle', fontSize: 12, color: p.days > 0 ? INK : GHOST, border: bd(true) } }
+        { text: mtxt.length ? mtxt : '–', options: { align: 'left', valign: 'middle', border: bd(true), color: GHOST } }
       ]);
     });
-    if (ci === assessChunks.length - 1 && B.pd > 0) {
-      const tb = [{ type: 'solid', pt: 1.5, color: ACCENT }, { type: 'none' }, { type: 'none' }, { type: 'none' }];
-      const tc = (t, al) => ({ text: t, options: { bold: true, color: NAVY, fill: { color: TINT }, align: al || 'left', valign: 'middle', fontSize: 12, border: tb } });
-      rows.push([tc('合計'), tc(''), tc(''), tc(''), tc(String(B.pd), 'center')]);
-    }
-    sl.addTable(rows, { fontFace: FONT, margin: [.04, .12, .04, .12], rowH: .45, x: LM, y: 1.8, w: CW, colW: [2.1, 1.4, 5.3, 2.2, 1.13] });
+    sl.addTable(rows, { fontFace: FONT, margin: [.04, .12, .04, .12], rowH: .45, x: LM, y: 1.8, w: CW, colW: [2.3, 1.5, 6.2, 2.13] });
   });
+  if (daysOnly) { const sl = pptx.addSlide(); header(sl, '施工評估', '施工概況'); rule(sl, 1.5); footer(sl); daysChip(sl); }
   matChunks.forEach((chunk, ci) => {
     const sl = pptx.addSlide();
     header(sl, '施工評估', ci ? '附屬耗材清單(續)' : '附屬耗材清單'); rule(sl, 1.5); footer(sl);
@@ -743,7 +776,6 @@ async function buildPptx(S, A) {
     if (works.length) parts.push(['施工方式', works.map(workLine), true]);
     if (link) parts.push(['系統連動', [link]]);
     if (mats.length) parts.push(['附屬耗材', [mats.map(m => `${m.n} ×${m.q}`).join('、')]]);
-    if (p.days > 0) parts.push(['預估工時', [`${p.days} 人天`]]);
     const cap = W - .4;
     const est = fs => parts.reduce((a, [, ls]) => a + 1 + ls.reduce((b, l) => b + Math.max(1, Math.ceil(l.length * (fs / 72) / cap)), 0), 0) * fs * 1.45 / 72 + parts.length * .1;
     let fs = 13; while (fs > 9 && est(fs) > Y + Hh - y0 - .12) fs -= 1;
@@ -781,7 +813,12 @@ async function buildPptx(S, A) {
       const r = rects[pi];
       sl.addShape(pptx.ShapeType.roundRect, { x: r.x - r.pad, y: r.y - r.pad, w: r.w + 2 * r.pad, h: r.h + 2 * r.pad, rectRadius: .06, fill: { color: 'FFFFFF' }, line: { color: HAIR, width: .75 }, shadow: { type: 'outer', color: '000000', opacity: .14, blur: 8, offset: 2, angle: 90 } });
       sl.addImage({ data: ph.src, x: r.x, y: r.y, w: r.w, h: r.h });
-      const LP = layoutPhoto(ph, r.w, r.h, pi === 0 ? p.alert : '');
+      const LP = layoutPhoto(ph, r.w, r.h, pi === 0 ? p.alert : '', photoMargins(r));
+      (ph.arrows || []).forEach(a => {
+        const X1 = r.x + a.x1 * r.w, Y1 = r.y + a.y1 * r.h, X2 = r.x + a.x2 * r.w, Y2 = r.y + a.y2 * r.h;
+        const ln = (col, wd, head) => sl.addShape(pptx.ShapeType.line, { x: Math.min(X1, X2), y: Math.min(Y1, Y2), w: Math.abs(X2 - X1), h: Math.abs(Y2 - Y1), flipH: X2 < X1, flipV: Y2 < Y1, line: { color: col, width: wd, endArrowType: head ? 'triangle' : undefined } });
+        ln('000000', 6.5, false); ln(ARROW_COL[a.c] || 'FFFFFF', 3.5, true);
+      });
       ph.marks.forEach(m => {
         const L = LP.marks[m.id];
         sl.addShape(pptx.ShapeType.roundRect, { x: r.x + L.box.x, y: r.y + L.box.y, w: L.box.w, h: L.box.h, rectRadius: .05, fill: { color: MARK, transparency: 88 }, line: { color: MARK, width: 2.5 } });
@@ -792,6 +829,7 @@ async function buildPptx(S, A) {
       });
       const ex = (E, fill, line, color, bold) => sl.addText(E.lines.join('\n'), { x: r.x + E.x, y: r.y + E.y, w: E.w, h: E.h, fontFace: FONT, fontSize: LABEL_PT - 1, color, bold, align: 'center', valign: 'middle', margin: 0, fit: 'none', shape: pptx.ShapeType.roundRect, rectRadius: .08, fill: { color: fill }, line: line ? { color: line, width: .75 } : { type: 'none' } });
       if (LP.extra.caption) ex(LP.extra.caption, NAVY, null, 'FFFFFF', true);
+      if (LP.extra.dir) ex(LP.extra.dir, ACCENT, null, 'FFFFFF', true);
       if (LP.extra.alert) ex(LP.extra.alert, 'FFF3C4', 'E0B100', INK, false);
     });
     if (hasAssess(p)) panel(sl, p);
@@ -868,8 +906,14 @@ function touch() {
   S.isSample = S.isSample && !S._edited;
   saveState = '儲存中…'; paintSave();
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => { const ok = await saveNow(); saveState = ok ? '已自動儲存' : '此瀏覽器無法自動儲存'; paintSave(); }, 700);
+  const run = async () => { if (composing) { saveTimer = setTimeout(run, 600); return; } const ok = await saveNow(); saveState = ok ? '已自動儲存' : '此瀏覽器無法自動儲存'; paintSave(); };
+  saveTimer = setTimeout(run, 1500);
 }
+// 輸入中文(輸入法組字中)時不存檔,避免大檔寫入卡住輸入法
+let composing = false;
+document.addEventListener('compositionstart', () => { composing = true; });
+document.addEventListener('compositionend', () => { composing = false; });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { try { flush(); } catch (e) {} } });
 function newId() { return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function meta(P) { return { id: P.id, name: P.site.name || '', client: P.site.client || '', date: P.site.date || '', pts: P.points.length, ph: P.points.reduce((a, p) => a + p.photos.length, 0), upd: Date.now() }; }
 async function saveNow() {
@@ -892,8 +936,12 @@ function normalize(P) {
   if (P.site.bookAll === undefined) P.site.bookAll = true;
   if (!P.site.crew) P.site.crew = 2;
   if (P.site.daysOverride === undefined) P.site.daysOverride = null;
+  if (P.site.city === undefined) {
+    const m = (P.site.address || '').match(/^(?:\d{3,6})?新北市([^區]{1,3}區)(.*)$/);
+    if (m) { P.site.city = '新北市'; P.site.dist = m[1]; P.site.address = m[2]; } else { P.site.city = '新北市'; P.site.dist = ''; }
+  }
   P.points.forEach(p => {
-    p.photos.forEach(x => { if (!x.marks) x.marks = []; });
+    p.photos.forEach(x => { if (!x.marks) x.marks = []; if (!x.arrows) x.arrows = []; if (x.dir === undefined) x.dir = ''; });
     if (p.verdict === undefined) p.verdict = '';
     if (!p.works) p.works = [];
     if (!p.mats) p.mats = [];
@@ -939,7 +987,7 @@ async function readPhoto(file) {
 // ---- 共用小元件 ----
 function field(label, input, hint) { return h('label', { class: 'fld' }, h('span', { class: 'fl' }, label), input, hint ? h('span', { class: 'hint' }, hint) : null); }
 function textIn(obj, key, ph, after) { return h('input', { type: 'text', value: obj[key] || '', placeholder: ph || '', oninput: e => { obj[key] = e.target.value; S._edited = true; touch(); after && after(); } }); }
-function numIn(obj, key, after) { return h('input', { type: 'number', inputmode: 'numeric', min: 0, value: obj[key], oninput: e => { obj[key] = num(e.target.value); S._edited = true; touch(); after && after(); } }); }
+function numIn(obj, key, after) { return h('input', { type: 'text', inputmode: 'numeric', min: 0, value: obj[key], oninput: e => { obj[key] = num(e.target.value); S._edited = true; touch(); after && after(); } }); }
 function selIn(obj, key, opts, after) {
   const s = h('select', { onchange: e => { obj[key] = e.target.value; S._edited = true; touch(); after && after(); } }, opts.map(([v, t]) => h('option', { value: v, selected: obj[key] === v }, t)));
   return s;
@@ -961,63 +1009,92 @@ function twoTap(label, doIt, cls) {
 // ---- 標記編輯舞台 ----
 function photoBlock(p, pi, rerenderBlocks) {
   const ph = p.photos[pi];
-  let selId = null, armedPreset = null;
+  if (!ph.arrows) ph.arrows = [];
+  let selId = null, selArrow = null, armedPreset = null, armedArrow = null, arrowColor = 'w';
   const root = h('div', { class: 'pblock' });
   const stageHost = h('div'), toolHost = h('div'), selHost = h('div'), cnt = h('span', { class: 'muted' });
   const rect = () => fitRects(p)[pi];
-  let refs = {}, extras = {}, svgEl = null, stageEl = null;
-  const px = (v, W) => (v / W * 100).toFixed(3) + '%', py = (v, H) => (v / H * 100).toFixed(3) + '%';
+  let refs = {}, extras = {}, arrEls = {}, svgEl = null, stageEl = null, G = { ml: 0, mr: 0, mt: 0, mb: 0 }, CW = 1, CH = 1;
+  // 舞台座標 = 照片座標(英吋)加上四周空白;百分比以整個舞台為基準
+  const px = v => ((v + G.ml) / CW * 100).toFixed(3) + '%', py = v => ((v + G.mt) / CH * 100).toFixed(3) + '%';
+  const pw = v => (v / CW * 100).toFixed(3) + '%', pht = v => (v / CH * 100).toFixed(3) + '%';
 
-  function boxStyle(L, W, H, extra) {
-    return `left:${px(L.x, W)};top:${py(L.y, H)};width:${px(L.w, W)};height:${py(L.h, H)};font-size:${(FONT_IN / W * 100).toFixed(3)}cqw;border-radius:${(.08 / W * 100).toFixed(3)}cqw;${extra || ''}`;
+  function boxStyle(L, extra) {
+    return `left:${px(L.x)};top:${py(L.y)};width:${pw(L.w)};height:${pht(L.h)};font-size:${(FONT_IN / CW * 100).toFixed(3)}cqw;border-radius:${(.08 / CW * 100).toFixed(3)}cqw;${extra || ''}`;
   }
   function positionAll() {
     const { w: W, h: H } = rect();
-    const LP = layoutPhoto(ph, W, H, pi === 0 ? p.alert : '');
+    const LP = layoutPhoto(ph, W, H, pi === 0 ? p.alert : '', G);
     ph.marks.forEach(m => {
       const r = refs[m.id]; if (!r) return;
       const L = LP.marks[m.id];
-      r.mk.style.cssText = `left:${px(L.box.x, W)};top:${py(L.box.y, H)};width:${px(L.box.w, W)};height:${py(L.box.h, H)};border-width:${(.0347 / W * 100).toFixed(3)}cqw;border-radius:${(.06 / W * 100).toFixed(3)}cqw`;
+      r.mk.style.cssText = `left:${px(L.box.x)};top:${py(L.box.y)};width:${pw(L.box.w)};height:${pht(L.box.h)};border-width:${(.0347 / CW * 100).toFixed(3)}cqw;border-radius:${(.06 / CW * 100).toFixed(3)}cqw`;
       r.mk.classList.toggle('sel', m.id === selId);
-      if (L.label) { r.lb.hidden = false; r.lb.textContent = L.label.lines.join('\n'); r.lb.style.cssText = boxStyle(L.label, W, H, `color:#${m.red ? RED : INK};font-weight:${m.red ? 700 : 400};border:1px solid #${m.red ? RED : 'c3cdd3'}`); }
+      if (L.label) { r.lb.hidden = false; r.lb.textContent = L.label.lines.join('\n'); r.lb.style.cssText = boxStyle(L.label, `color:#${m.red ? RED : INK};font-weight:${m.red ? 700 : 400};border:1px solid #${m.red ? RED : 'c3cdd3'}`); }
       else r.lb.hidden = true;
       r.g.replaceChildren(...L.arrows.map(a => sv('line', { x1: a[0], y1: a[1], x2: a[2], y2: a[3], stroke: '#' + MARK, 'stroke-width': .0175, 'marker-end': `url(#ah${p.id}${pi})` })));
-      r.rz.style.left = `calc(${px(L.box.x + L.box.w, W)} - 9px)`; r.rz.style.top = `calc(${py(L.box.y + L.box.h, H)} - 9px)`;
+      r.rz.style.left = `calc(${px(L.box.x + L.box.w)} - 9px)`; r.rz.style.top = `calc(${py(L.box.y + L.box.h)} - 9px)`;
       r.rz.hidden = m.id !== selId;
     });
-    [['caption', 'cap', ph.caption, '#' + NAVY, '#fff'], ['alert', 'alr', pi === 0 ? p.alert : '', '#fff3c4', '#' + INK]].forEach(([k, cls, txt, bg, fg]) => {
+    ph.arrows.forEach(a => {
+      const e = arrEls[a.id]; if (!e) return;
+      const X1 = a.x1 * W, Y1 = a.y1 * H, X2 = a.x2 * W, Y2 = a.y2 * H, col = '#' + (ARROW_COL[a.c] || 'FFFFFF');
+      e.halo.setAttribute('x1', X1); e.halo.setAttribute('y1', Y1); e.halo.setAttribute('x2', X2); e.halo.setAttribute('y2', Y2);
+      e.line.setAttribute('x1', X1); e.line.setAttribute('y1', Y1); e.line.setAttribute('x2', X2); e.line.setAttribute('y2', Y2);
+      e.line.setAttribute('stroke', col); e.line.setAttribute('marker-end', `url(#ar${a.c || 'w'}${p.id}${pi})`);
+      const sel = a.id === selArrow;
+      const place = (el, X, Y) => { el.style.left = `calc(${px(X)} - 14px)`; el.style.top = `calc(${py(Y)} - 14px)`; };
+      place(e.mid, (X1 + X2) / 2, (Y1 + Y2) / 2); place(e.tail, X1, Y1); place(e.head, X2, Y2);
+      e.tail.hidden = e.head.hidden = !sel; e.mid.classList.toggle('sel', sel);
+    });
+    [['caption', ph.caption, '#' + NAVY, '#fff'], ['dir', DIR_LABEL[ph.dir], '#' + ACCENT, '#fff'], ['alert', pi === 0 ? p.alert : '', '#fff3c4', '#' + INK]].forEach(([k, txt, bg, fg]) => {
       const el = extras[k]; if (!el) return;
       const E = LP.extra[k];
-      if (E) { el.hidden = false; el.textContent = E.lines.join('\n'); el.style.cssText = boxStyle(E, W, H, `background:${bg};color:${fg};font-size:${((FONT_IN - 1 / 72) / W * 100).toFixed(3)}cqw`); } else el.hidden = true;
+      if (E) { el.hidden = false; el.textContent = E.lines.join('\n'); el.style.cssText = boxStyle(E, `background:${bg};color:${fg};font-size:${((FONT_IN - 1 / 72) / CW * 100).toFixed(3)}cqw`); } else el.hidden = true;
     });
   }
 
-  function bindDrag(el, stage, onMove) {
+  function bindDrag(el, stage, onMove, noStop) {
     el.addEventListener('pointerdown', e => {
       e.preventDefault(); e.stopPropagation();
       el.setPointerCapture(e.pointerId);
-      const b = stage.getBoundingClientRect(), sx = e.clientX, sy = e.clientY;
+      const b = stage.getBoundingClientRect(), { w: W, h: H } = rect(), sx = e.clientX, sy = e.clientY;
       const start = onMove.start && onMove.start();
-      const move = ev => { onMove.move((ev.clientX - sx) / b.width, (ev.clientY - sy) / b.height, start); positionAll(); };
+      const move = ev => { onMove.move((ev.clientX - sx) / b.width * CW / W, (ev.clientY - sy) / b.height * CH / H, start); positionAll(); };
       const up = () => { el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); S._edited = true; touch(); };
       el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
     });
   }
 
-  function select(id) { selId = id; positionAll(); paintSel(); }
+  function select(id) { selId = id; selArrow = null; positionAll(); paintSel(); }
+  function selectArrow(id) { selArrow = id; selId = null; positionAll(); paintSel(); }
 
   function buildStage() {
     const { w: W, h: H } = rect();
-    const stage = h('div', { class: 'stage', style: `aspect-ratio:${ph.w}/${ph.h}` });
+    G = photoMargins(rect()); CW = W + G.ml + G.mr; CH = H + G.mt + G.mb;
+    const stage = h('div', { class: 'stage' + (G.ml + G.mr + G.mb > 0 ? ' out' : '') + (armedArrow ? ' draw' : ''), style: `aspect-ratio:${CW}/${CH}` });
     stageEl = stage;
-    stage.append(h('img', { src: ph.src, alt: '', draggable: 'false' }));
-    const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', class: 'arrows' });
+    stage.append(h('img', { src: ph.src, alt: '', draggable: 'false', style: `left:${px(0)};top:${py(0)};width:${pw(W)};height:${pht(H)}` }));
+    const svg = sv('svg', { viewBox: `${-G.ml} ${-G.mt} ${CW} ${CH}`, preserveAspectRatio: 'none', class: 'arrows' });
     const defs = sv('defs', {});
     const mk = sv('marker', { id: `ah${p.id}${pi}`, markerWidth: .22, markerHeight: .2, refX: .2, refY: .1, orient: 'auto', markerUnits: 'userSpaceOnUse' });
     mk.append(sv('path', { d: 'M0,0 L.22,.1 L0,.2 z', fill: '#' + MARK }));
-    defs.append(mk); svg.append(defs);
+    defs.append(mk);
+    Object.entries(ARROW_COL).forEach(([k, c]) => { const m2 = sv('marker', { id: `ar${k}${p.id}${pi}`, markerWidth: .4, markerHeight: .36, refX: .37, refY: .18, orient: 'auto', markerUnits: 'userSpaceOnUse' }); m2.append(sv('path', { d: 'M0,0 L.4,.18 L0,.36 z', fill: '#' + c, stroke: '#000', 'stroke-width': .03, 'stroke-linejoin': 'round' })); defs.append(m2); });
+    svg.append(defs);
     stage.append(svg);
-    refs = {}; extras = {};
+    refs = {}; extras = {}; arrEls = {};
+    ph.arrows.forEach(a => {
+      const halo = sv('line', { stroke: '#000', 'stroke-opacity': .55, 'stroke-width': .1, 'stroke-linecap': 'round' }), line = sv('line', { 'stroke-width': .06, 'stroke-linecap': 'round' });
+      svg.append(halo, line);
+      const mid = h('div', { class: 'ah mid', title: '點選箭頭' }), tail = h('div', { class: 'ah', hidden: true, title: '拖曳尾端' }), head = h('div', { class: 'ah hd', hidden: true, title: '拖曳箭頭端' });
+      stage.append(mid, tail, head);
+      arrEls[a.id] = { halo, line, mid, tail, head };
+      mid.addEventListener('click', e => { e.stopPropagation(); selectArrow(a.id); });
+      bindDrag(mid, stage, { start: () => { selectArrow(a.id); return { ...a }; }, move: (dx, dy, s0) => { const k = Math.min(1 - Math.max(s0.x1, s0.x2), Math.min(s0.x1, s0.x2)); const ddx = clamp(dx, -Math.min(s0.x1, s0.x2), 1 - Math.max(s0.x1, s0.x2)), ddy = clamp(dy, -Math.min(s0.y1, s0.y2), 1 - Math.max(s0.y1, s0.y2)); a.x1 = s0.x1 + ddx; a.x2 = s0.x2 + ddx; a.y1 = s0.y1 + ddy; a.y2 = s0.y2 + ddy; } });
+      bindDrag(tail, stage, { start: () => ({ ...a }), move: (dx, dy, s0) => { a.x1 = clamp(s0.x1 + dx, 0, 1); a.y1 = clamp(s0.y1 + dy, 0, 1); } });
+      bindDrag(head, stage, { start: () => ({ ...a }), move: (dx, dy, s0) => { a.x2 = clamp(s0.x2 + dx, 0, 1); a.y2 = clamp(s0.y2 + dy, 0, 1); } });
+    });
     ph.marks.forEach(m => {
       const g = sv('g', {}); svg.append(g);
       const box = h('div', { class: 'mk', title: '拖曳移動' });
@@ -1036,37 +1113,66 @@ function photoBlock(p, pi, rerenderBlocks) {
         move: (dx, dy, s0) => { m.w = clamp(s0.w + dx, .015, 1 - m.x); m.h = clamp(s0.h + dy, .015, 1 - m.y); }
       });
       bindDrag(lb, stage, {
-        start: () => { select(m.id); const L = layoutPhoto(ph, W, H).marks[m.id].label; return { cx: (L.x + L.w / 2) / W, cy: (L.y + L.h / 2) / H }; },
-        move: (dx, dy, s0) => { m.lx = clamp(s0.cx + dx, 0, 1); m.ly = clamp(s0.cy + dy, 0, 1); }
+        start: () => { select(m.id); const L = layoutPhoto(ph, W, H, '', G).marks[m.id].label; return { cx: (L.x + L.w / 2) / W, cy: (L.y + L.h / 2) / H }; },
+        move: (dx, dy, s0) => { m.lx = clamp(s0.cx + dx, -G.ml / W, 1 + G.mr / W); m.ly = clamp(s0.cy + dy, -G.mt / H, 1 + G.mb / H); }
       });
     });
-    extras.caption = h('div', { class: 'lb static', hidden: true }); extras.alert = h('div', { class: 'lb static', hidden: true });
-    stage.append(extras.caption, extras.alert);
+    extras.caption = h('div', { class: 'lb static', hidden: true }); extras.dir = h('div', { class: 'lb static', hidden: true }); extras.alert = h('div', { class: 'lb static', hidden: true });
+    stage.append(extras.caption, extras.dir, extras.alert);
+    const toPhoto = e => { const b = stage.getBoundingClientRect(); return { x: ((e.clientX - b.left) / b.width * CW - G.ml) / W, y: ((e.clientY - b.top) / b.height * CH - G.mt) / H }; };
+    // 箭頭模式:在照片上按住拖曳 = 起點到箭頭端
+    stage.addEventListener('pointerdown', e => {
+      if (!armedArrow || e.target.closest('.ah')) return;
+      const o = toPhoto(e); if (o.x < 0 || o.x > 1 || o.y < 0 || o.y > 1) return;
+      e.preventDefault(); stage.setPointerCapture(e.pointerId);
+      const a = { id: nid(), x1: o.x, y1: o.y, x2: o.x, y2: o.y, c: arrowColor };
+      let moved = false;
+      const tmp = sv('line', { x1: o.x * W, y1: o.y * H, x2: o.x * W, y2: o.y * H, stroke: '#' + ARROW_COL[arrowColor], 'stroke-width': .06, 'stroke-linecap': 'round' }); svg.append(tmp);
+      const mv = ev => { const q = toPhoto(ev); a.x2 = clamp(q.x, 0, 1); a.y2 = clamp(q.y, 0, 1); tmp.setAttribute('x2', a.x2 * W); tmp.setAttribute('y2', a.y2 * H); moved = true; };
+      const up = () => {
+        stage.removeEventListener('pointermove', mv); stage.removeEventListener('pointerup', up); stage.removeEventListener('pointercancel', up);
+        if (!moved || Math.hypot((a.x2 - a.x1) * W, (a.y2 - a.y1) * H) < .25) { a.x2 = clamp(a.x1 + .6 / W, 0, 1); a.y2 = a.y1; if (a.x2 - a.x1 < .2 / W) { a.x2 = a.x1; a.x1 = clamp(a.x1 - .6 / W, 0, 1); } }
+        ph.arrows.push(a); armedArrow = false; selArrow = a.id; selId = null; S._edited = true; touch();
+        stageHost.replaceChildren(buildStage()); positionAll(); paintTools(); paintSel();
+      };
+      stage.addEventListener('pointermove', mv); stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+    });
     stage.addEventListener('click', e => {
       if (armedPreset) {
-        const b = stage.getBoundingClientRect();
-        const cx = (e.clientX - b.left) / b.width, cy = (e.clientY - b.top) / b.height;
+        const o = toPhoto(e); if (o.x < 0 || o.x > 1 || o.y < 0 || o.y > 1) return;
+        const cx = o.x, cy = o.y;
         const pr = armedPreset;
         const m = { id: nid(), x: clamp(cx - pr.w / 2, 0, 1 - pr.w), y: clamp(cy - pr.h / 2, 0, 1 - pr.h), w: pr.w, h: pr.h, text: pr.t, red: !!pr.red, lx: null, ly: null, to: null };
-        ph.marks.push(m); armedPreset = null; selId = m.id; S._edited = true; touch();
+        ph.marks.push(m); armedPreset = null; selId = m.id; selArrow = null; S._edited = true; touch();
         stageHost.replaceChildren(buildStage()); positionAll(); paintTools(); paintSel();
-      } else if (selId) { select(null); }
+      } else if (selId || selArrow) { selId = null; selArrow = null; positionAll(); paintSel(); }
     });
     return stage;
   }
 
   function paintTools() {
-    cnt.textContent = `${ph.marks.length} 個標記`;
+    cnt.textContent = `${ph.marks.length} 個標記${ph.arrows.length ? `、${ph.arrows.length} 個箭頭` : ''}`;
     const list = [...(PRESETS[p.kind] || []), { k: 'custom', t: '', w: .1, h: .1, label: '自訂文字' }];
     toolHost.replaceChildren(
       h('div', { class: 'chips' },
         h('span', { class: 'chiplabel' }, '標記:'),
-        list.map(pr => h('button', { type: 'button', class: 'chip' + (armedPreset && armedPreset.k === pr.k ? ' on' : ''), onclick: () => { armedPreset = armedPreset && armedPreset.k === pr.k ? null : pr; paintTools(); } }, '＋ ' + (pr.label || pr.t.replace(/^(增設|加購 )/, '')))),
+        list.map(pr => h('button', { type: 'button', class: 'chip' + (armedPreset && armedPreset.k === pr.k ? ' on' : ''), onclick: () => { armedPreset = armedPreset && armedPreset.k === pr.k ? null : pr; armedArrow = false; stageEl && stageEl.classList.toggle('draw', false); paintTools(); } }, '＋ ' + (pr.label || pr.t.replace(/^(增設|加購 )/, '')))),
+        h('button', { type: 'button', class: 'chip' + (armedArrow ? ' on' : ''), onclick: () => { armedArrow = !armedArrow; armedPreset = null; stageEl && stageEl.classList.toggle('draw', armedArrow); paintTools(); } }, '↗ 箭頭'),
       ),
-      armedPreset ? h('p', { class: 'armed-hint' }, `請在照片上點一下要放「${armedPreset.label || armedPreset.t}」的位置`) : h('p', { class: 'hint pad' }, '先選標記類型,再點照片放置;紅框可拖曳,右下角圓點縮放,標籤也能拖。')
+      armedPreset ? h('p', { class: 'armed-hint' }, `請在照片上點一下要放「${armedPreset.label || armedPreset.t}」的位置`)
+        : armedArrow ? h('p', { class: 'armed-hint' }, '在照片上從尾端按住拖到要指的地方(電箱內的開關、設備都適用)')
+        : h('p', { class: 'hint pad' }, '紅框標記位置、箭頭指小東西;標籤可拖到照片外的空白處。')
     );
   }
   function paintSel() {
+    const ar = ph.arrows.find(x => x.id === selArrow);
+    if (ar) {
+      selHost.replaceChildren(h('div', { class: 'selpanel' },
+        h('div', { class: 'row' }, h('span', { class: 'fl' }, '箭頭顏色'),
+          [['w', '白'], ['r', '紅'], ['y', '黃']].map(([k, t]) => h('button', { type: 'button', class: 'chip sm' + ((ar.c || 'w') === k ? ' on' : ''), onclick: () => { ar.c = k; arrowColor = k; S._edited = true; touch(); positionAll(); paintSel(); } }, t)),
+          twoTap('刪除箭頭', () => { ph.arrows = ph.arrows.filter(x => x !== ar); selArrow = null; S._edited = true; touch(); stageHost.replaceChildren(buildStage()); positionAll(); paintSel(); paintTools(); }))));
+      return;
+    }
     const m = ph.marks.find(x => x.id === selId);
     if (!m) { selHost.replaceChildren(); return; }
     const hasFollowers = ph.marks.some(f => f.to === m.id);
@@ -1082,16 +1188,20 @@ function photoBlock(p, pi, rerenderBlocks) {
       share,
       h('div', { class: 'row' },
         m.to ? null : chkIn('紅字(新增/加購)', m, 'red', positionAll),
-        m.to ? null : h('button', { type: 'button', class: 'btn ghost', onclick: () => { m.lx = null; m.ly = null; S._edited = true; touch(); positionAll(); } }, '標籤歸位'),
+        m.to ? null : h('button', { type: 'button', class: 'btn ghost', onclick: () => { m.lx = null; m.ly = null; S._edited = true; touch(); positionAll(); } }, '標籤自動擺放'),
         twoTap('刪除標記', () => { ph.marks = ph.marks.filter(x => x !== m); ph.marks.forEach(f => { if (f.to === m.id) f.to = null; }); selId = null; S._edited = true; touch(); stageHost.replaceChildren(buildStage()); positionAll(); paintSel(); paintTools(); }))
     ));
   }
+
+  const dirBox = p.kind === 'door' ? h('div', { class: 'fld' }, h('span', { class: 'fl' }, '拍攝方向(門的兩側都要有照片)'),
+    h('div', { class: 'seg', style: 'grid-template-columns:repeat(3,1fr)', role: 'group' }, [['', '不標示'], ['out', '門外往內拍'], ['in', '門內往外拍']].map(([k, t]) => h('button', { type: 'button', class: `segb ${k === '' ? 'ask' : 'have'}${(ph.dir || '') === k ? ' on' : ''}`, onclick: () => { ph.dir = k; S._edited = true; touch(); positionAll(); dirBox.querySelectorAll('.segb').forEach((b, i) => b.classList.toggle('on', ['', 'out', 'in'][i] === k)); onTouch && onTouch(); } }, t)))) : null;
 
   root.append(
     h('div', { class: 'phead' }, h('strong', null, `照片 ${pi + 1}`), cnt,
       h('span', { class: 'sp' }),
       pi > 0 ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => { [p.photos[pi - 1], p.photos[pi]] = [p.photos[pi], p.photos[pi - 1]]; touch(); rerenderBlocks(); } }, '左移') : null,
       twoTap('移除照片', () => { p.photos.splice(pi, 1); S._edited = true; touch(); rerenderBlocks(); }, 'btn ghost danger sm')),
+    dirBox,
     h('label', { class: 'fld' }, h('span', { class: 'fl' }, '照片說明(顯示在照片左下角,例:2F 前門)'),
       h('input', { type: 'text', value: ph.caption || '', placeholder: '可留空', oninput: e => { ph.caption = e.target.value; S._edited = true; touch(); positionAll(); } })),
     stageHost, toolHost, selHost);
@@ -1206,6 +1316,14 @@ function wpField(p, refit) {
 }
 const FLOORS = ['B1', '1F', '2F', '3F', '4F', '5F', '6F', '頂樓'], PLACES = ['大門', '後門', '側門', '冷氣', '燈具', '舞台', '管理室'], BOXES = ['管理室內', '電氣室', '機房', '中控室', '配電室', '樓梯間'], TARGETS = ['燈具', '插座', '冷氣', '風扇', '飲水機'];
 
+const NTP_DISTS = ['板橋區', '三重區', '中和區', '永和區', '新莊區', '新店區', '樹林區', '鶯歌區', '三峽區', '淡水區', '汐止區', '瑞芳區', '土城區', '蘆洲區', '五股區', '泰山區', '林口區', '深坑區', '石碇區', '坪林區', '三芝區', '石門區', '八里區', '平溪區', '雙溪區', '貢寮區', '金山區', '萬里區', '烏來區'];
+function addrPick(s) {
+  const city = h('select', { onchange: e => { s.city = e.target.value; S._edited = true; touch(); } }, h('option', { value: '新北市', selected: true }, '新北市'));
+  const dist = h('select', { onchange: e => { s.dist = e.target.value; S._edited = true; touch(); } }, h('option', { value: '' }, '請選擇區'), NTP_DISTS.map(d => h('option', { value: d, selected: s.dist === d }, d)));
+  dist.value = s.dist || '';
+  return h('div', null, h('div', { class: 'row', style: 'gap:8px' }, city, dist), h('input', { type: 'text', value: s.address || '', placeholder: '路段巷弄號,例:中山路一段100號', style: 'margin-top:8px', oninput: e => { s.address = e.target.value; S._edited = true; touch(); } }));
+}
+
 function siteView() {
   const s = S.site;
   const prev = h('div', { class: 'cover' });
@@ -1218,11 +1336,10 @@ function siteView() {
     h('div', { class: 'grid' },
       field('客戶', clientPick(s)),
       field('場館 / 案名', textIn(s, 'name', '例:○○市民活動中心', () => $('#sub').textContent = s.name || '尚未命名案場')),
-      field('地址', textIn(s, 'address', '例:新北市○○區○○路○號')),
+      field('地址', addrPick(s)),
       field('場勘日期', h('input', { type: 'date', value: s.date, oninput: e => { s.date = e.target.value; S._edited = true; touch(); } })),
       field('預約連動系統指令(第一行)', textIn(s, 'bookingText', '例:綁智慧活動中心平台預約', null), '顯示在「場租預約」欄。點位勾選「場租預約連動」才會出現。'),
-      field('預約連動說明(第二行)', textIn(s, 'bookingLine', '例:連動1F大門', null)),
-      field('預估安裝天數(現場決定)', h('input', { type: 'number', inputmode: 'decimal', step: 0.5, min: 0, value: s.daysOverride ?? '', placeholder: '例:2', onchange: e => { const v = e.target.value; s.daysOverride = v === '' ? null : Number(v); S._edited = true; touch(); } }), '會寫在報告的設備明細「安裝天數」。')),
+      field('預約連動說明(第二行)', textIn(s, 'bookingLine', '例:連動1F大門', null))),
     chkIn('點位標題的 QR 掃碼機寫成「QR 掃碼機X1」', s, 'qrX'),
     chkIn('所有設備列都標示預約連動指令(人工報告慣例)', s, 'bookAll'),
     h('h3', null, '外觀照(封面右側)'),
@@ -1275,7 +1392,7 @@ function editView() {
   const addHost = h('div');
   const fileIn = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async e => {
     const files = [...e.target.files].slice(0, 5 - p.photos.length);
-    for (const f of files) { const x = await readPhoto(f); x.marks = []; p.photos.push(x); }
+    for (const f of files) { const x = await readPhoto(f); x.marks = []; x.arrows = []; x.dir = ''; p.photos.push(x); }
     e.target.value = ''; S._edited = true; touch(); paintBlocks();
   } });
   const paintAdd = () => addHost.replaceChildren(p.photos.length < 5
@@ -1345,11 +1462,6 @@ function assessSection(p, refit) {
         h('div', { class: 'chips' }, howChips(p).map(c => h('button', { type: 'button', class: 'chip sm', onclick: () => { const was = stat(); w.how = (w.how || '') + c; ta.value = w.how; changed(was); } }, c)))));
     });
 
-    const stepper = h('div', { class: 'stepper' },
-      h('button', { type: 'button', class: 'iconbtn', 'aria-label': '減少', onclick: () => { const was = stat(); p.days = Math.max(0, (p.days || 0) - .5); changed(was); val.textContent = String(p.days); } }, '−'),
-      h('span', { class: 'val' }, ''), h('button', { type: 'button', class: 'iconbtn', 'aria-label': '增加', onclick: () => { const was = stat(); p.days = (p.days || 0) + .5; changed(was); val.textContent = String(p.days); } }, '＋'));
-    const val = stepper.querySelector('.val'); val.textContent = String(p.days || 0);
-
     const mats = h('div', { class: 'mats' });
     p.mats.forEach(m => mats.append(h('div', { class: 'mrow' }, h('span', { class: 'mn' }, m.n),
       h('button', { type: 'button', class: 'iconbtn', 'aria-label': '減少', onclick: () => { const was = stat(); m.q = Math.max(1, m.q - 1); changed(was); paint(); } }, '−'),
@@ -1364,7 +1476,6 @@ function assessSection(p, refit) {
       h('div', { class: 'fld' }, h('span', { class: 'fl' }, '現場判定'), seg),
       h('div', { class: 'fld' }, h('span', { class: 'fl' }, '施工方式(每一項寫:對象 + 怎麼做;點下方短句可快速組句)'), works,
         h('button', { type: 'button', class: 'btn', onclick: () => { p.works.push({ id: nid(), target: '', how: '' }); S._edited = true; touch(); paint(); } }, '＋ 新增施工項目')),
-      h('div', { class: 'fld' }, h('span', { class: 'fl' }, '預估工時(人天)'), stepper),
       h('div', { class: 'fld' }, h('span', { class: 'fl' }, '附屬耗材(點一下加 1 件)'),
         h('div', { class: 'chips' }, MAT_PRESETS.map(n => h('button', { type: 'button', class: 'chip', onclick: () => addMat(n) }, '＋ ' + n))),
         mats,
@@ -1394,15 +1505,14 @@ function exportView() {
     pendingItems(p).forEach(x => warns.push(`${nm}:${x}`));
     if (p.photos.length > 3) warns.push(`${nm}有 ${p.photos.length} 張照片,版面會縮小,確認是否要刪減`);
   });
-  if (!(computeBuild(S).days > 0)) warns.push('預估安裝天數還沒填(現場決定,案場頁或這頁都可以填)');
+  if (!(computeBuild(S).days > 0)) warns.push('整體預估安裝天數還沒填(最後在這頁決定即可)');
   if (!S.points.length) warns.push('尚未新增任何點位');
   const B = computeBuild(S);
   const build = h('div', { class: 'buildbox' },
     h('div', { class: 'grid' },
-      h('div', { class: 'stat' }, h('span', { class: 'fl' }, '預估總人天'), h('strong', null, String(B.pd))),
-      field('施工人數', h('input', { type: 'number', inputmode: 'numeric', min: 1, value: S.site.crew || 2, onchange: e => { S.site.crew = Math.max(1, num(e.target.value)); S._edited = true; touch(); render(); } })),
-      field('預估安裝天數(留空 = 自動換算)', h('input', { type: 'number', inputmode: 'decimal', step: 0.5, min: 0, value: S.site.daysOverride ?? '', placeholder: String(B.auto || ''), onchange: e => { const v = e.target.value; S.site.daysOverride = v === '' ? null : Number(v); S._edited = true; touch(); render(); } }))),
-    h('p', { class: 'hint' }, `目前輸出:${B.days > 0 ? B.days + ' 天' : '未填(各點位都沒有填人天)'}。自動換算 = 總人天 ÷ 施工人數,進位到 0.5 天。`),
+      field('整體預估安裝天數(最後再決定)', h('input', { type: 'text', inputmode: 'decimal', value: S.site.daysOverride ?? '', placeholder: '例:2', onchange: e => { const v = e.target.value.trim(); S.site.daysOverride = v === '' || isNaN(Number(v)) ? null : Number(v); S._edited = true; touch(); render(); } }), '不用每個點位估,這裡整體填一次。'),
+      field('施工人數', h('input', { type: 'text', inputmode: 'numeric', value: S.site.crew || 2, onchange: e => { S.site.crew = Math.max(1, num(e.target.value)); S._edited = true; touch(); render(); } }))),
+    h('p', { class: 'hint' }, B.days > 0 ? `目前輸出:${B.days} 天、${B.crew} 人施工,合計 ${B.pd} 人天(顯示在施工評估頁,不放首頁)。` : '尚未填寫,報告不會顯示安裝天數。'),
     B.mats.length ? h('div', { class: 'tblwrap' }, h('table', { class: 'tbl', style: 'min-width:0' }, h('thead', null, h('tr', null, ['附屬耗材', '數量', '使用點位'].map(t => h('th', null, t)))), h('tbody', null, B.mats.map(m => h('tr', null, h('th', { scope: 'row' }, m.n), h('td', null, String(m.q)), h('td', { style: 'text-align:left' }, [...new Set(m.pts)].join('、'))))))) : h('p', { class: 'hint' }, '尚未填寫附屬耗材。'));
   const status = h('p', { class: 'hint', id: 'xstatus', role: 'status' });
   const btn = h('button', { type: 'button', class: 'btn solid wide', disabled: !S.points.length, onclick: async () => {
@@ -1442,7 +1552,7 @@ function exportView() {
     btn, status);
 }
 
-function blankProject() { return { isSample: false, site: { client: '', name: '', address: '', date: new Date().toISOString().slice(0, 10), bookingText: '綁智慧活動中心平台預約', bookAll: true, bookingLine: '', crew: 2, daysOverride: null, cover: null }, points: [] }; }
+function blankProject() { return { isSample: false, site: { client: '', name: '', city: '新北市', dist: '', address: '', date: new Date().toISOString().slice(0, 10), bookingText: '綁智慧活動中心平台預約', bookAll: true, bookingLine: '', crew: 2, daysOverride: null, cover: null }, points: [] }; }
 
 async function boot() {
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) { }
