@@ -282,8 +282,8 @@ const PRESETS = {
     { k: 'ir', label: '紅外線感應開關', t: '增設紅外線非接觸式\n感應開關', w: .05, h: .09 },
     { k: 'closer', t: '門弓器', w: .1, h: .06 }
   ],
-  meter: [{ k: 'all', t: '全燈', w: .16, h: .2 }, { k: 'r1', t: '第1排燈', w: .12, h: .25 }],
-  switch: [{ k: 'ac', t: '冷氣', w: .14, h: .2 }, { k: 'box', t: '開關箱', w: .14, h: .2 }]
+  meter: [{ k: 'all', t: '全燈', w: .16, h: .2 }, { k: 'r1', t: '第1排燈', w: .12, h: .25 }, { k: 'unit', label: '燈具(紅框)', t: '', w: .1, h: .12 }],
+  switch: [{ k: 'ac', t: '冷氣', w: .14, h: .2 }, { k: 'unit', label: '冷氣本體(紅框)', t: '', w: .1, h: .22 }, { k: 'box', t: '開關箱', w: .14, h: .2 }]
 };
 
 let _uid = 0;
@@ -318,14 +318,14 @@ function pendingItems(p) {
       else if (!ds.includes('out')) r.push('已有門內往外的照片,請再補一張門外往內拍的');
     }
   } else if (!(p.photos || []).some(ph => (ph.marks || []).length || (ph.arrows || []).length)) r.push(p.kind === 'meter' ? '電表:照片上還沒標註安裝位置/控制範圍' : '控制器:照片上還沒標註安裝位置/控制設備');
-  if (p.kind !== 'door' && !(p.box || '').trim()) r.push('電箱位置沒填');
+  if (p.kind !== 'door' && !(p.box || '').trim() && !(p.photos || []).some(x => (x.box || '').trim())) r.push('電箱位置沒填(在電箱那張照片填)');
   if (p.kind === 'switch' && /冷氣/.test(p.target || '') && !(p.units > 0)) r.push('冷氣台數沒填(並建議拍冷氣本體)');
+  if (p.kind === 'switch' && /冷氣/.test(p.target || '') && p.units > 0) { const n = (p.photos || []).reduce((a, x) => a + (x.marks || []).length, 0); if (n < p.units) r.push(`冷氣共 ${p.units} 台,照片上只標了 ${n} 處,請在冷氣照片標出每台位置`); }
   if (p.kind === 'meter' && /\d/.test(p.note || '') && p.count < Math.max(...(p.note.match(/\d+/g) || [0]).map(Number))) r.push(`備註提到數字(${p.note}),但數量是 ${p.count},請確認`);
-  if (!p.verdict) r.push('可否施工還沒判定');
   return r;
 }
 function isQr(p) { return p.kind === 'door' && !!(p.qr || (p.photos || []).some(ph => (ph.marks || []).some(m => /QR/i.test(m.text || '')))); }
-function hasAssess(p) { return !!(p.verdict || cleanWorks(p).length || (p.mats || []).length || (p.link || '').trim()); }
+function hasAssess(p) { return !!((p.verdict && p.verdict !== 'go') || cleanWorks(p).length || (p.mats || []).length || (p.link || '').trim()); }
 function howChips(p) {
   const eq = p.kind === 'meter' ? [`增設${p.phase}電源控制電表`] : p.kind === 'switch' ? ['增設電源開關控制器'] : ['增設陽極鎖+外掛盒', '增設紅外線感應開關', '增設 QR 掃碼機', '增設電源開關控制器'];
   return [...HOW_SRC, '增設', ...eq, ...HOW_COND];
@@ -341,7 +341,7 @@ function computeBuild(S) {
 }
 
 function newPoint(kind) {
-  const b = { id: nid(), kind, loc: '', row: '', booking: false, note: '', photos: [], verdict: '', works: [], days: 0, mats: [], link: '', box: '', units: 0 };
+  const b = { id: nid(), kind, loc: '', row: '', booking: false, note: '', photos: [], verdict: 'go', works: [], days: 0, mats: [], link: '', box: '', units: 0 };
   if (kind === 'door') Object.assign(b, { qr: true, locks: 0, lockSt: '', ir: 0, irSt: '', panels: 0, mode: 'both', pwr: 'none', closer: 0 });
   if (kind === 'meter') Object.assign(b, { phase: '3P', count: 1, target: '燈具', est: false });
   if (kind === 'switch') Object.assign(b, { target: '冷氣', count: 1, est: false });
@@ -407,11 +407,12 @@ function addAgg(list, label, n, est) {
   if (ex) ex.n += n; else list.push({ k, label, est, n, t: '' });
   list.forEach(x => { if (x.k !== undefined && x.label !== undefined) x.t = x.est ? `(${x.label} ×${x.n})` : `${x.label} ×${x.n}`; });
 }
+function floorOf(loc) { const m = (loc || '').trim().match(/^(B\d+F?|地下\d+樓|\d+F|\d+樓|頂樓|屋頂)/i); return m ? m[1] : ''; }
 function computeTable(S) {
   const rows = [], idx = {};
   const tot = { door: 0, sw: 0, p2: 0, p3: 0, closer: 0 };
   S.points.forEach(p => {
-    const name = (p.row || p.loc || '(未命名)').trim();
+    const name = (p.row || floorOf(p.loc) || p.loc || '(未命名)').trim();
     if (!(name in idx)) { idx[name] = rows.length; rows.push({ name, door: [], sw: [], p2: [], p3: [], closer: 0, booking: false, bookLines: [] }); }
     const r = rows[idx[name]];
     if ((S.site.bookAll || p.booking || (p.link || '').trim()) && !r.bookLines.length) {
@@ -444,12 +445,13 @@ function computeBom(S) {
     ['戶外防水殼', mat('戶外防水殼') ? mat('戶外防水殼').q : 0, mat('戶外防水殼') ? [...new Set(mat('戶外防水殼').pts)].join('、') : ''],
     ['電源開關控制器', t.sw, '']];
   B.mats.filter(m => m.n !== '戶外防水殼').forEach(m => rows.push([m.n, m.q, [...new Set(m.pts)].join('、')]));
+  rows.push(['安裝天數', B.days || 0, B.days > 0 ? `${B.crew} 人施工,合計 ${B.pd} 人天` : '']);
   return rows;
 }
 function pointChips(p) {
   const r = [];
   if (p.kind === 'switch' && p.units > 0) r.push(`${p.target || '設備'}共${p.units}台`);
-  if (p.kind !== 'door' && (p.box || '').trim()) r.push('電箱位置: ' + p.box.trim());
+  if (p.kind !== 'door' && (p.box || '').trim() && !(p.photos || []).some(x => (x.box || '').trim())) r.push('電箱位置: ' + p.box.trim());
   return r;
 }
 
@@ -457,7 +459,7 @@ function pointChips(p) {
 function fitRects(p) {
   const n = p.photos.length;
   if (!n) return [];
-  const strip = pointIcons(p).length > 0 || !!p.note;
+  const strip = true;
   const ax = .6, aw = hasAssess(p) ? 7.95 : 12.13, ay = 1.9, ah = (strip ? 4.2 : 5.0) - (pointChips(p).length ? .5 : 0), gap = .35, pad = .07;
   const cw = (aw - gap * (n - 1)) / n;
   return p.photos.map((ph, i) => {
@@ -513,6 +515,7 @@ function layoutPhoto(ph, W, H, alertText, G) {
   ph.marks.forEach(m => out[m.id] = { box: boxOf(m), label: null, arrows: [] });
   const extra = {};
   if (ph.caption) { const z = labelSize(ph.caption, W); extra.caption = { x: .08, y: H - z.h - .08, w: z.w, h: z.h, lines: z.lines }; }
+  if ((ph.box || '').trim()) { const z = labelSize('電箱位置: ' + ph.box.trim(), W); extra.box = { x: W - z.w - .08, y: H - z.h - .08, w: z.w, h: z.h, lines: z.lines }; }
   if (DIR_LABEL[ph.dir]) { const z = labelSize(DIR_LABEL[ph.dir], W); extra.dir = { x: W - z.w - .08, y: .08, w: z.w, h: z.h, lines: z.lines }; }
   if (alertText) { const z = labelSize(alertText, W); extra.alert = { x: .1, y: .1, w: z.w, h: z.h, lines: z.lines }; }
   const ov = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
@@ -609,8 +612,8 @@ async function buildPptx(S, A) {
   const eqR = 2 + T.rows.reduce((a, r) => a + Math.max(1, r.door.length, r.sw.length, r.p2.length, r.p3.length), 0), bR = BOMR.length + 1;
   const mRow = Math.min(.3, 3.6 / (eqR + bR)), merge = mRow >= .21;
   const cs = mRow >= .28 ? 11 : mRow >= .26 ? 10.5 : mRow >= .24 ? 10 : mRow >= .22 ? 9.5 : 9;
-  const daysOnly = B.days > 0 && !assessChunks.length;
-  const total = (merge ? 2 : 4) + (daysOnly ? 1 : 0) + assessChunks.length + matChunks.length + S.points.length;
+  const daysOnly = false;
+  const total = (merge ? 2 : 4) + 1 + (daysOnly ? 1 : 0) + assessChunks.length + matChunks.length + S.points.length;
   let pageNo = 0;
   const LM = .6, RM = 12.73, CW = RM - LM;
   const T0 = { fontFace: FONT, margin: 0 };
@@ -741,7 +744,6 @@ async function buildPptx(S, A) {
   assessChunks.forEach((chunk, ci) => {
     const sl = pptx.addSlide();
     header(sl, '施工評估', ci ? '施工評估總表(續)' : '施工評估總表'); rule(sl, 1.5); footer(sl);
-    if (ci === 0) daysChip(sl);
     const rows = [[head('位置', 'left'), head('可否施工'), head('施工方式', 'left'), head('附屬耗材', 'left')]];
     chunk.forEach(({ p, i }) => {
       const works = cleanWorks(p), link = (p.link || '').trim().replace(/\n/g, ' ');
@@ -830,13 +832,14 @@ async function buildPptx(S, A) {
       const ex = (E, fill, line, color, bold) => sl.addText(E.lines.join('\n'), { x: r.x + E.x, y: r.y + E.y, w: E.w, h: E.h, fontFace: FONT, fontSize: LABEL_PT - 1, color, bold, align: 'center', valign: 'middle', margin: 0, fit: 'none', shape: pptx.ShapeType.roundRect, rectRadius: .08, fill: { color: fill }, line: line ? { color: line, width: .75 } : { type: 'none' } });
       if (LP.extra.caption) ex(LP.extra.caption, NAVY, null, 'FFFFFF', true);
       if (LP.extra.dir) ex(LP.extra.dir, ACCENT, null, 'FFFFFF', true);
+      if (LP.extra.box) ex(LP.extra.box, 'FFFFFF', RED, RED, false);
       if (LP.extra.alert) ex(LP.extra.alert, 'FFF3C4', 'E0B100', INK, false);
     });
     if (hasAssess(p)) panel(sl, p);
     {
       const chips = pointChips(p);
       if (chips.length) {
-        const strip0 = pointIcons(p).length > 0 || !!p.note, cy = 1.9 + (strip0 ? 4.2 : 5.0) - .5 + .1;
+        const strip0 = true, cy = 1.9 + (strip0 ? 4.2 : 5.0) - .5 + .1;
         let cx = LM;
         chips.forEach(t => { const cw = textW(t) * (12 / LABEL_PT) + .4; sl.addText(t, { x: cx, y: cy, w: cw, h: .38, fontFace: FONT, fontSize: 12, color: RED, align: 'center', valign: 'middle', margin: 0, shape: pptx.ShapeType.rect, fill: { color: 'FFFFFF' }, line: { color: RED, width: 1 } }); cx += cw + .15; });
       }
@@ -852,13 +855,20 @@ async function buildPptx(S, A) {
       sl.addText([{ text: name, options: { color: INK, fontSize: 12, breakLine: true } }, { text: `${q} 組`, options: { color: ACCENT, bold: true, fontSize: 11 } }], { ...T0, x: ix + .9, y: 6.2, w: tw, h: .78, valign: 'middle' });
       ix += .9 + tw + .3;
     });
-    if (p.note) {
-      const room = RM - ix;
-      if (room > 3.2 || !icons.length) sl.addText([{ text: '備註　', options: { bold: true, color: RED } }, { text: p.note, options: { color: INK } }], { ...T0, x: ix, y: 6.2, w: room, h: .78, fontSize: 13, valign: 'middle', align: icons.length ? 'right' : 'left' });
-      else sl.addText([{ text: '備註　', options: { bold: true, color: RED } }, { text: p.note, options: { color: INK } }], { ...T0, x: LM, y: 6.82, w: CW, h: .26, fontSize: 11 });
+    { // 備註框(每頁固定)
+      const bx = Math.max(ix, RM - 5.6), bw = RM - bx;
+      sl.addShape(pptx.ShapeType.roundRect, { x: bx, y: 6.2, w: bw, h: .8, rectRadius: .06, fill: { color: 'FFFFFF' }, line: { color: HAIR, width: 1 } });
+      sl.addText('備註', { ...T0, x: bx + .1, y: 6.22, w: .6, h: .22, fontSize: 10, bold: true, color: RED });
+      if ((p.note || '').trim()) sl.addText(p.note.trim(), { ...T0, x: bx + .1, y: 6.43, w: bw - .2, h: .55, fontSize: 11, color: INK, valign: 'top', fit: 'shrink' });
     }
     footer(sl);
   });
+  { // 最後一頁:總備註
+    const sl = pptx.addSlide(); header(sl, '備註', '現場特殊狀況說明'); rule(sl, 1.5); footer(sl);
+    sl.addShape(pptx.ShapeType.roundRect, { x: LM, y: 1.8, w: CW, h: 4.9, rectRadius: .06, fill: { color: 'FFFFFF' }, line: { color: HAIR, width: 1 } });
+    sl.addText('備註', { ...T0, x: LM + .15, y: 1.88, w: 1, h: .3, fontSize: 12, bold: true, color: RED });
+    if ((S.site.remark || '').trim()) sl.addText(S.site.remark.trim(), { ...T0, x: LM + .15, y: 2.2, w: CW - .3, h: 4.4, fontSize: 14, color: INK, valign: 'top', fit: 'shrink' });
+  }
   let raw; try { raw = await pptx.write({ outputType: 'blob' }); } catch (e) { raw = await pptx.write('blob'); }
   return new Blob([raw], { type: PPTX_MIME });
 }
@@ -936,13 +946,15 @@ function normalize(P) {
   if (P.site.bookAll === undefined) P.site.bookAll = true;
   if (!P.site.crew) P.site.crew = 2;
   if (P.site.daysOverride === undefined) P.site.daysOverride = null;
+  if (P.site.remark === undefined) P.site.remark = '';
   if (P.site.city === undefined) {
     const m = (P.site.address || '').match(/^(?:\d{3,6})?新北市([^區]{1,3}區)(.*)$/);
     if (m) { P.site.city = '新北市'; P.site.dist = m[1]; P.site.address = m[2]; } else { P.site.city = '新北市'; P.site.dist = ''; }
   }
   P.points.forEach(p => {
     p.photos.forEach(x => { if (!x.marks) x.marks = []; if (!x.arrows) x.arrows = []; if (x.dir === undefined) x.dir = ''; });
-    if (p.verdict === undefined) p.verdict = '';
+    if (!p.verdict) p.verdict = 'go';
+    if ((p.box || '').trim() && p.photos.length && !p.photos.some(x => (x.box || '').trim())) { p.photos[0].box = p.box; p.box = ''; }
     if (!p.works) p.works = [];
     if (!p.mats) p.mats = [];
     if (p.days === undefined) p.days = 0;
@@ -1047,10 +1059,10 @@ function photoBlock(p, pi, rerenderBlocks) {
       place(e.mid, (X1 + X2) / 2, (Y1 + Y2) / 2); place(e.tail, X1, Y1); place(e.head, X2, Y2);
       e.tail.hidden = e.head.hidden = !sel; e.mid.classList.toggle('sel', sel);
     });
-    [['caption', ph.caption, '#' + NAVY, '#fff'], ['dir', DIR_LABEL[ph.dir], '#' + ACCENT, '#fff'], ['alert', pi === 0 ? p.alert : '', '#fff3c4', '#' + INK]].forEach(([k, txt, bg, fg]) => {
+    [['caption', ph.caption, '#' + NAVY, '#fff'], ['dir', DIR_LABEL[ph.dir], '#' + ACCENT, '#fff'], ['box', ph.box, '#fff', '#' + RED], ['alert', pi === 0 ? p.alert : '', '#fff3c4', '#' + INK]].forEach(([k, txt, bg, fg]) => {
       const el = extras[k]; if (!el) return;
       const E = LP.extra[k];
-      if (E) { el.hidden = false; el.textContent = E.lines.join('\n'); el.style.cssText = boxStyle(E, `background:${bg};color:${fg};font-size:${((FONT_IN - 1 / 72) / CW * 100).toFixed(3)}cqw`); } else el.hidden = true;
+      if (E) { el.hidden = false; el.textContent = E.lines.join('\n'); el.style.cssText = boxStyle(E, `${k === 'box' ? 'border:1px solid #' + RED + ';' : ''}background:${bg};color:${fg};font-size:${((FONT_IN - 1 / 72) / CW * 100).toFixed(3)}cqw`); } else el.hidden = true;
     });
   }
 
@@ -1117,8 +1129,8 @@ function photoBlock(p, pi, rerenderBlocks) {
         move: (dx, dy, s0) => { m.lx = clamp(s0.cx + dx, -G.ml / W, 1 + G.mr / W); m.ly = clamp(s0.cy + dy, -G.mt / H, 1 + G.mb / H); }
       });
     });
-    extras.caption = h('div', { class: 'lb static', hidden: true }); extras.dir = h('div', { class: 'lb static', hidden: true }); extras.alert = h('div', { class: 'lb static', hidden: true });
-    stage.append(extras.caption, extras.dir, extras.alert);
+    extras.caption = h('div', { class: 'lb static', hidden: true }); extras.dir = h('div', { class: 'lb static', hidden: true }); extras.box = h('div', { class: 'lb static', hidden: true }); extras.alert = h('div', { class: 'lb static', hidden: true });
+    stage.append(extras.caption, extras.dir, extras.box, extras.alert);
     const toPhoto = e => { const b = stage.getBoundingClientRect(); return { x: ((e.clientX - b.left) / b.width * CW - G.ml) / W, y: ((e.clientY - b.top) / b.height * CH - G.mt) / H }; };
     // 箭頭模式:在照片上按住拖曳 = 起點到箭頭端
     stage.addEventListener('pointerdown', e => {
@@ -1196,12 +1208,13 @@ function photoBlock(p, pi, rerenderBlocks) {
   const dirBox = p.kind === 'door' ? h('div', { class: 'fld' }, h('span', { class: 'fl' }, '拍攝方向(門的兩側都要有照片)'),
     h('div', { class: 'seg', style: 'grid-template-columns:repeat(3,1fr)', role: 'group' }, [['', '不標示'], ['out', '門外往內拍'], ['in', '門內往外拍']].map(([k, t]) => h('button', { type: 'button', class: `segb ${k === '' ? 'ask' : 'have'}${(ph.dir || '') === k ? ' on' : ''}`, onclick: () => { ph.dir = k; S._edited = true; touch(); positionAll(); dirBox.querySelectorAll('.segb').forEach((b, i) => b.classList.toggle('on', ['', 'out', 'in'][i] === k)); onTouch && onTouch(); } }, t)))) : null;
 
+  const boxBox = p.kind !== 'door' ? (() => { const t = h('input', { type: 'text', value: ph.box || '', placeholder: '這張是電箱才填,例:管理室內', oninput: e => { ph.box = e.target.value; S._edited = true; touch(); positionAll(); } }); return h('div', { class: 'fld' }, h('span', { class: 'fl' }, '電箱位置(這張照片是電箱才填,會用紅框標在照片上)'), t, chipRow(boxChips(), v => { ph.box = v; t.value = v; S._edited = true; touch(); positionAll(); })); })() : null;
   root.append(
     h('div', { class: 'phead' }, h('strong', null, `照片 ${pi + 1}`), cnt,
       h('span', { class: 'sp' }),
       pi > 0 ? h('button', { type: 'button', class: 'btn ghost sm', onclick: () => { [p.photos[pi - 1], p.photos[pi]] = [p.photos[pi], p.photos[pi - 1]]; touch(); rerenderBlocks(); } }, '左移') : null,
       twoTap('移除照片', () => { p.photos.splice(pi, 1); S._edited = true; touch(); rerenderBlocks(); }, 'btn ghost danger sm')),
-    dirBox,
+    dirBox, boxBox,
     h('label', { class: 'fld' }, h('span', { class: 'fl' }, '照片說明(顯示在照片左下角,例:2F 前門)'),
       h('input', { type: 'text', value: ph.caption || '', placeholder: '可留空', oninput: e => { ph.caption = e.target.value; S._edited = true; touch(); positionAll(); } })),
     stageHost, toolHost, selHost);
@@ -1275,7 +1288,7 @@ function listView() {
     st, inp);
 }
 
-function boxChips() { const used = [...new Set(S.points.map(x => (x.box || '').trim()).filter(Boolean))]; return [...new Set([...used, ...BOXES])].slice(0, 9); }
+function boxChips() { const used = [...new Set(S.points.flatMap(x => [x.box, ...x.photos.map(y => y.box)]).map(x => (x || '').trim()).filter(Boolean))]; return [...new Set([...used, ...BOXES])].slice(0, 9); }
 function clientPick(s) {
   const cur = s.client || '', known = CLIENTS.find(c => c.n === cur);
   const other = h('input', { type: 'text', value: known ? '' : cur, placeholder: '輸入客戶名稱', style: 'margin-top:8px;' + (known || !cur ? 'display:none' : ''), oninput: e => { s.client = e.target.value; S._edited = true; touch(); } });
@@ -1319,13 +1332,55 @@ const FLOORS = ['B1', '1F', '2F', '3F', '4F', '5F', '6F', '頂樓'], PLACES = ['
 const NTP_DISTS = ['板橋區', '三重區', '中和區', '永和區', '新莊區', '新店區', '樹林區', '鶯歌區', '三峽區', '淡水區', '汐止區', '瑞芳區', '土城區', '蘆洲區', '五股區', '泰山區', '林口區', '深坑區', '石碇區', '坪林區', '三芝區', '石門區', '八里區', '平溪區', '雙溪區', '貢寮區', '金山區', '萬里區', '烏來區'];
 function addrPick(s) {
   const city = h('select', { onchange: e => { s.city = e.target.value; S._edited = true; touch(); } }, h('option', { value: '新北市', selected: true }, '新北市'));
-  const dist = h('select', { onchange: e => { s.dist = e.target.value; S._edited = true; touch(); } }, h('option', { value: '' }, '請選擇區'), NTP_DISTS.map(d => h('option', { value: d, selected: s.dist === d }, d)));
+  const dist = h('select', { class: 'addrsel', 'data-k': 'dist', onchange: e => { s.dist = e.target.value; S._edited = true; touch(); } }, h('option', { value: '' }, '請選擇區'), NTP_DISTS.map(d => h('option', { value: d, selected: s.dist === d }, d)));
   dist.value = s.dist || '';
-  return h('div', null, h('div', { class: 'row', style: 'gap:8px' }, city, dist), h('input', { type: 'text', value: s.address || '', placeholder: '路段巷弄號,例:中山路一段100號', style: 'margin-top:8px', oninput: e => { s.address = e.target.value; S._edited = true; touch(); } }));
+  return h('div', null, h('div', { class: 'row', style: 'gap:8px' }, city, dist), h('input', { type: 'text', class: 'addrsel', value: s.address || '', placeholder: '路段巷弄號,例:中山路一段100號', style: 'margin-top:8px', oninput: e => { s.address = e.target.value; S._edited = true; touch(); } }));
 }
 
+// 以場館名稱查地址(OpenStreetMap Nominatim,免金鑰;只送出場館名稱)
+async function lookupAddr(name) {
+  const get = async qs => { const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&accept-language=zh-TW&countrycodes=tw&limit=6&q=${encodeURIComponent(qs)}`, { headers: { Accept: 'application/json' } }); if (!r.ok) throw new Error('http ' + r.status); return r.json(); };
+  let arr = await get(name.trim() + ' 新北市');
+  if (!arr.length) { await new Promise(r => setTimeout(r, 1100)); arr = await get(name.trim()); }
+  const out = [];
+  arr.forEach(x => {
+    const a = x.address || {}, vals = Object.values(a).map(String);
+    const city = vals.find(v => /新北市$/.test(v)) || '', dist = vals.find(v => /區$/.test(v)) || '';
+    if (city !== '新北市') return;
+    const road = a.road || '', no = a.house_number ? String(a.house_number).replace(/號$/, '') + '號' : '';
+    const street = road + no;
+    if (!dist) return;
+    if (!out.some(o => o.dist === dist && o.street === street)) out.push({ city, dist, street, label: `${city}${dist}${street}` });
+  });
+  return out;
+}
+function nameAddrPick(s) {
+  const status = h('p', { class: 'hint' }), list = h('div', { class: 'chips' });
+  let busy = false;
+  const apply = c => { s.city = c.city; s.dist = c.dist; s.address = c.street; S._edited = true; touch(); render(); };
+  const run = async (auto) => {
+    const nm = (s.name || '').trim();
+    if (nm.length < 4 || busy) return;
+    busy = true; status.textContent = '查詢地址中…'; list.replaceChildren();
+    try {
+      const res = await lookupAddr(nm);
+      if (!res.length) status.textContent = '查不到這個名稱的地址,請手動選區並輸入路段號。';
+      else {
+        status.textContent = auto && !s.dist && !(s.address || '').trim() ? '已自動帶入第一筆,請確認;不對可點下方其他結果。' : '點選正確的地址:';
+        if (auto && !s.dist && !(s.address || '').trim()) { s.city = res[0].city; s.dist = res[0].dist; s.address = res[0].street; S._edited = true; touch(); }
+        list.replaceChildren(...res.map(c => h('button', { type: 'button', class: 'chip sm', onclick: () => apply(c) }, c.label)));
+        if (auto && s.dist) { const d = document.querySelectorAll('.addrsel'); d.forEach(x => { if (x.tagName === 'SELECT' && x.dataset.k === 'dist') x.value = s.dist; if (x.tagName === 'INPUT') x.value = s.address || ''; }); }
+      }
+    } catch (e) { status.textContent = '目前無法查詢(可能沒有網路),請手動輸入。'; }
+    busy = false;
+  };
+  const inp = h('input', { type: 'text', value: s.name || '', placeholder: '例:○○市民活動中心', oninput: e => { s.name = e.target.value; S._edited = true; touch(); $('#sub').textContent = s.name || '尚未命名案場'; }, onchange: () => run(true) });
+  const wrap = h('div', null, inp, h('div', { class: 'row', style: 'margin-top:8px' }, h('button', { type: 'button', class: 'btn', onclick: () => run(false) }, '🔍 用名稱查地址')), status, list);
+  return wrap;
+}
 function siteView() {
   const s = S.site;
+  const nameAddr = { name: nameAddrPick(s), addr: addrPick(s) };
   const prev = h('div', { class: 'cover' });
   const paintCover = () => prev.replaceChildren(s.cover ? h('img', { src: s.cover.src, alt: '建築外觀' }) : h('div', { class: 'ph' }, '尚無外觀照'));
   paintCover();
@@ -1335,8 +1390,8 @@ function siteView() {
     h('h2', null, '案場資料'),
     h('div', { class: 'grid' },
       field('客戶', clientPick(s)),
-      field('場館 / 案名', textIn(s, 'name', '例:○○市民活動中心', () => $('#sub').textContent = s.name || '尚未命名案場')),
-      field('地址', addrPick(s)),
+      field('場館 / 案名', nameAddr.name),
+      field('地址', nameAddr.addr),
       field('場勘日期', h('input', { type: 'date', value: s.date, oninput: e => { s.date = e.target.value; S._edited = true; touch(); } })),
       field('預約連動系統指令(第一行)', textIn(s, 'bookingText', '例:綁智慧活動中心平台預約', null), '顯示在「場租預約」欄。點位勾選「場租預約連動」才會出現。'),
       field('預約連動說明(第二行)', textIn(s, 'bookingLine', '例:連動1F大門', null))),
@@ -1422,15 +1477,13 @@ function editView() {
     chkIn('預估(尚未測試,清單加括號)', p, 'est'),
     field('電表規格', selIn(p, 'phase', [['2P', '2P'], ['3P', '3P']], refit)),
     field('數量', numIn(p, 'count', paintTitle)),
-    (() => { const t = textIn(p, 'target', '例:燈具', paintTitle); return h('div', { style: 'display:contents' }, field('控制對象', t), chipRow(TARGETS, v => { p.target = v; t.value = v; S._edited = true; touch(); paintTitle(); })); })(),
-    (() => { const t = textIn(p, 'box', '例:面舞台左邊中控室', refit); return h('div', { style: 'display:contents' }, field('電箱位置', t, '會以紅框文字標在照片下方。'), chipRow(boxChips(), v => { p.box = v; t.value = v; S._edited = true; touch(); refit(); })); })());
+    (() => { const t = textIn(p, 'target', '例:燈具', paintTitle); return h('div', { style: 'display:contents' }, field('控制對象', t), chipRow(TARGETS, v => { p.target = v; t.value = v; S._edited = true; touch(); paintTitle(); })); })());
   if (p.kind === 'switch') f.append(
     chkIn('預估(尚未測試,清單加括號)', p, 'est'),
     (() => { const t = textIn(p, 'target', '例:冷氣', paintTitle); return h('div', { style: 'display:contents' }, field('控制對象', t), chipRow(TARGETS, v => { p.target = v; t.value = v; S._edited = true; touch(); paintTitle(); })); })(),
     field('數量(控制器顆數)', numIn(p, 'count', paintTitle)),
-    (() => { const t = textIn(p, 'box', '例:進門左手邊電氣室', refit); return h('div', { style: 'display:contents' }, field('電箱位置', t, '會以紅框文字標在照片下方。'), chipRow(boxChips(), v => { p.box = v; t.value = v; S._edited = true; touch(); refit(); })); })(),
     field('被控制設備台數(例:冷氣共幾台)', numIn(p, 'units', refit), '會標「冷氣共N台」,請一併拍冷氣本體。'));
-  f.append(chkIn('場租預約連動', p, 'booking'), field('備註(顯示在頁面標題下方,紅字)', textIn(p, 'note', '例:目前為拉門,後續需改為雙開門')));
+  f.append(chkIn('場租預約連動', p, 'booking'), field('備註(現場特殊狀況,顯示在每頁右下角備註框)', h('textarea', { rows: 3, placeholder: '例:目前為拉門,後續需改為雙開門', oninput: e => { p.note = e.target.value; S._edited = true; touch(); } }, p.note || '')));
   const al = h('textarea', { rows: 2, placeholder: '例:未斷電測試\n預估2P X 4顆', oninput: e => { p.alert = e.target.value; S._edited = true; touch(); refit(); } }, p.alert || '');
   f.append(field('黃底提醒框(顯示在第一張照片左上角,可留空)', al));
   paintBlocks();
@@ -1450,7 +1503,7 @@ function assessSection(p, refit) {
 
   function paint() {
     const seg = h('div', { class: 'seg', role: 'group', 'aria-label': '可否施工' },
-      Object.entries(VERDICT).map(([k, v]) => h('button', { type: 'button', class: `segb ${k}${p.verdict === k ? ' on' : ''}`, 'aria-pressed': String(p.verdict === k), onclick: () => { const was = stat(); p.verdict = p.verdict === k ? '' : k; changed(was); paint(); } }, v.t)));
+      Object.entries(VERDICT).map(([k, v]) => h('button', { type: 'button', class: `segb ${k}${p.verdict === k ? ' on' : ''}`, 'aria-pressed': String(p.verdict === k), onclick: () => { const was = stat(); p.verdict = k; changed(was); paint(); } }, v.t)));
 
     const works = h('div', { class: 'works' });
     p.works.forEach(w => {
@@ -1508,11 +1561,12 @@ function exportView() {
   if (!(computeBuild(S).days > 0)) warns.push('整體預估安裝天數還沒填(最後在這頁決定即可)');
   if (!S.points.length) warns.push('尚未新增任何點位');
   const B = computeBuild(S);
+  const remarkBox = h('div', { class: 'buildbox' }, field('最後一頁備註(全案特殊狀況)', h('textarea', { rows: 4, placeholder: '例:2F 當天未勘查;施工需配合場館活動時段', oninput: e => { S.site.remark = e.target.value; S._edited = true; touch(); } }, S.site.remark || '')));
   const build = h('div', { class: 'buildbox' },
     h('div', { class: 'grid' },
       field('整體預估安裝天數(最後再決定)', h('input', { type: 'text', inputmode: 'decimal', value: S.site.daysOverride ?? '', placeholder: '例:2', onchange: e => { const v = e.target.value.trim(); S.site.daysOverride = v === '' || isNaN(Number(v)) ? null : Number(v); S._edited = true; touch(); render(); } }), '不用每個點位估,這裡整體填一次。'),
       field('施工人數', h('input', { type: 'text', inputmode: 'numeric', value: S.site.crew || 2, onchange: e => { S.site.crew = Math.max(1, num(e.target.value)); S._edited = true; touch(); render(); } }))),
-    h('p', { class: 'hint' }, B.days > 0 ? `目前輸出:${B.days} 天、${B.crew} 人施工,合計 ${B.pd} 人天(顯示在施工評估頁,不放首頁)。` : '尚未填寫,報告不會顯示安裝天數。'),
+    h('p', { class: 'hint' }, B.days > 0 ? `目前輸出:${B.days} 天、${B.crew} 人施工,合計 ${B.pd} 人天(顯示在首頁設備明細的「安裝天數」)。` : '尚未填寫,報告不會顯示安裝天數。'),
     B.mats.length ? h('div', { class: 'tblwrap' }, h('table', { class: 'tbl', style: 'min-width:0' }, h('thead', null, h('tr', null, ['附屬耗材', '數量', '使用點位'].map(t => h('th', null, t)))), h('tbody', null, B.mats.map(m => h('tr', null, h('th', { scope: 'row' }, m.n), h('td', null, String(m.q)), h('td', { style: 'text-align:left' }, [...new Set(m.pts)].join('、'))))))) : h('p', { class: 'hint' }, '尚未填寫附屬耗材。'));
   const status = h('p', { class: 'hint', id: 'xstatus', role: 'status' });
   const btn = h('button', { type: 'button', class: 'btn solid wide', disabled: !S.points.length, onclick: async () => {
@@ -1543,6 +1597,7 @@ function exportView() {
     h('h2', null, '匯出'),
     h('p', { class: 'lead' }, `輸出:封面、設備清單、控制說明${B.any ? '、施工評估總表' : ''}${B.mats.length ? '、附屬耗材清單' : ''},加上 ${S.points.length} 個點位頁。內容是可在 PowerPoint 編輯的原生文字與形狀。`),
     h('h3', null, '施工概況'), build,
+    h('h3', null, '最後一頁備註'), remarkBox,
     h('h3', null, '設備清單(自動加總)'),
     h('div', { class: 'tblwrap' }, tbl),
     h('p', { class: 'hint' }, '這張表會出現在報告首頁,以及「設備控制描述・場租預約」頁。列名取自各點位的「清單表格列」(留空 = 位置);場租預約欄依「案場」頁的設定。'),
@@ -1552,7 +1607,7 @@ function exportView() {
     btn, status);
 }
 
-function blankProject() { return { isSample: false, site: { client: '', name: '', city: '新北市', dist: '', address: '', date: new Date().toISOString().slice(0, 10), bookingText: '綁智慧活動中心平台預約', bookAll: true, bookingLine: '', crew: 2, daysOverride: null, cover: null }, points: [] }; }
+function blankProject() { return { isSample: false, site: { client: '', name: '', city: '新北市', dist: '', address: '', date: new Date().toISOString().slice(0, 10), bookingText: '綁智慧活動中心平台預約', bookAll: true, bookingLine: '', crew: 2, daysOverride: null, remark: '', cover: null }, points: [] }; }
 
 async function boot() {
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) { }
