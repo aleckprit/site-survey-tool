@@ -121,7 +121,8 @@ input[type=number]{font-variant-numeric:tabular-nums}
 .segb{appearance:none;font:inherit;font-size:14px;font-weight:500;border:1.5px solid var(--line);background:var(--surface);color:var(--ink);border-radius:10px;min-height:48px;padding:6px 6px;cursor:pointer;line-height:1.25}
 .segb.go.on{background:#ddf1e5;border-color:#1d7a4c;color:#1d7a4c}
 .segb.cond.on{background:#fff0bf;border-color:#b07a00;color:#7a4b00}
-.segb.no.on{background:#fbe0dd;border-color:#b3261e;color:#b3261e}
+.segb.no.on,.segb.unc.on{background:#fbe0dd;border-color:#b3261e;color:#b3261e}
+.segb.tbd.on{background:#ece7f7;border-color:#5b4b8a;color:#5b4b8a}
 .assess{display:flex;flex-direction:column;gap:16px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px}
 .works{display:flex;flex-direction:column;gap:10px}
 .work{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:10px;padding:10px}
@@ -266,8 +267,31 @@ const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.
 const VERDICT = {
   go: { t: '可直接施工', c: '1D7A4C', bg: 'DDF1E5' },
   cond: { t: '有條件可施工', c: '8A5A00', bg: 'FFF0BF' },
-  no: { t: '不可施工', c: 'B3261E', bg: 'FBE0DD' }
+  no: { t: '不可施工', c: 'B3261E', bg: 'FBE0DD' },
+  tbd: { t: '待決定', c: '5B4B8A', bg: 'ECE7F7' },
+  unc: { t: '不可控', c: 'B3261E', bg: 'FBE0DD' }
 };
+const CTL = { sw: '電源開關控制器', p3: '3P 電源控制電表', p2: '2P 電源控制電表', tbd: '待決定', none: '不可控' };
+const uList = p => (p.us && p.us.length ? p.us : (p.kind === 'switch' ? [{ ctl: 'sw', q: p.count || 0, cnt: p.units || 1, how: '' }] : []));
+const swQ = (p, c) => uList(p).filter(u => u.ctl === c).reduce((a, u) => a + (u.q || 0), 0);
+const unitCnt = p => uList(p).reduce((a, u) => a + (u.cnt || 1), 0);
+const counted = p => !['tbd', 'unc'].includes(p.verdict);
+function unitLabel(p, u, i) { const t = p.target || '設備'; return (u.cnt || 1) > 1 ? `${t}共${u.cnt}台` : (uList(p).length > 1 ? `${i + 1}號${t}` : t); }
+function unitLine(p, u, i) {
+  const how = (u.how || '').trim(), t = { sw: '增設電源開關控制器', p3: '增設 3P 電源控制電表', p2: '增設 2P 電源控制電表', tbd: '待決定是否安裝', none: '不可控(照相紀錄)' }[u.ctl] || '';
+  if (!how && !['tbd', 'none'].includes(u.ctl) && uList(p).length < 2) return '';
+  return how || t ? `${unitLabel(p, u, i)}:${how}${t}` : '';
+}
+function noteLines(p) {
+  const L = [], v = VERDICT[p.verdict];
+  if (v && p.verdict !== 'go') L.push({ t: v.t, b: true });
+  cleanWorks(p).forEach(w => L.push({ t: workLine(w) }));
+  if (p.kind === 'switch') uList(p).forEach((u, i) => { const t = unitLine(p, u, i); if (t) L.push({ t }); });
+  if ((p.link || '').trim()) L.push({ t: '系統連動:' + p.link.trim().replace(/\n/g, ' ') });
+  if ((p.mats || []).length) L.push({ t: '附屬耗材:' + p.mats.map(m => `${m.n} ×${m.q}`).join('、') });
+  return L;
+}
+const noteH = p => { const n = noteLines(p).length; return n ? Math.min(1.25, n * (n > 4 ? .2 : .25) + .14) : 0; };
 const MAT_PRESETS = ['戶外防水殼', '線材', '線槽/保護管', '固定五金', '端子/接頭'];
 const HOW_SRC = ['需由冷氣電源截斷', '由現有開關', '由現有電源', '由分電盤'];
 const HOW_COND = ['需另拉電源線', '需開孔/鑽孔', '需高空作業', '需協調停電'];
@@ -319,8 +343,13 @@ function pendingItems(p) {
     }
   } else if (!(p.photos || []).some(ph => (ph.marks || []).length || (ph.arrows || []).length)) r.push(p.kind === 'meter' ? '電表:照片上還沒標註安裝位置/控制範圍' : '控制器:照片上還沒標註安裝位置/控制設備');
   if (p.kind !== 'door' && !(p.box || '').trim() && !(p.photos || []).some(x => (x.box || '').trim())) r.push('電箱位置沒填(在電箱那張照片填)');
-  if (p.kind === 'switch' && /冷氣/.test(p.target || '') && !(p.units > 0)) r.push('冷氣台數沒填(並建議拍冷氣本體)');
-  if (p.kind === 'switch' && /冷氣/.test(p.target || '') && p.units > 0) { const n = (p.photos || []).reduce((a, x) => a + (x.marks || []).length, 0); if (n < p.units) r.push(`冷氣共 ${p.units} 台,照片上只標了 ${n} 處,請在冷氣照片標出每台位置`); }
+  if (p.kind === 'switch') {
+    const us = uList(p);
+    if (!us.length || us.some(u => !u.ctl)) r.push('控制方式還沒選(開關控制器 / 3P 電表 / 待決定 / 不可控)');
+    const N = unitCnt(p), n = (p.photos || []).reduce((a, x) => a + (x.marks || []).length, 0);
+    if (N > 1 && n < N) r.push(`${p.target || '設備'}共 ${N} 台,照片上只標了 ${n} 處,請標出每台位置(可用 1號、2號 編號)`);
+  }
+  if (p.wp === 'ask') r.push('戶外防水殼:還沒確認要不要');
   if (p.kind === 'meter' && /\d/.test(p.note || '') && p.count < Math.max(...(p.note.match(/\d+/g) || [0]).map(Number))) r.push(`備註提到數字(${p.note}),但數量是 ${p.count},請確認`);
   return r;
 }
@@ -341,7 +370,8 @@ function computeBuild(S) {
 }
 
 function newPoint(kind) {
-  const b = { id: nid(), kind, loc: '', row: '', booking: false, note: '', photos: [], verdict: 'go', works: [], days: 0, mats: [], link: '', box: '', units: 0 };
+  const b = { id: nid(), kind, loc: '', row: '', booking: false, note: '', photos: [], verdict: 'go', works: [], days: 0, mats: [], link: '', box: '', units: 0, wp: 'no' };
+  if (kind === 'switch') Object.assign(b, { us: [{ id: nid(), ctl: '', q: 1, cnt: 1, how: '' }], wp: 'no' });
   if (kind === 'door') Object.assign(b, { qr: true, locks: 0, lockSt: '', ir: 0, irSt: '', panels: 0, mode: 'both', pwr: 'none', closer: 0 });
   if (kind === 'meter') Object.assign(b, { phase: '3P', count: 1, target: '燈具', est: false });
   if (kind === 'switch') Object.assign(b, { target: '冷氣', count: 1, est: false });
@@ -367,7 +397,12 @@ function pointHeader(p, i, qrx) {
     const t = p.target === '燈具' ? '燈控' : p.target;
     return { eyebrow: `點位 ${n}　${kind}`, title: `${loc}　${t}`, tparts: [loc, t], groups: [[{ n: '雲端智慧電表', q: p.count }, { n: `${p.phase} 電源控制電表` }]] };
   }
-  return { eyebrow: `點位 ${n}　${kind}`, title: `${loc}　${p.target}`, tparts: [loc, p.target], groups: [[{ n: '電源開關控制器', q: p.count }]] };
+  const g = [];
+  if (swQ(p, 'sw')) g.push({ n: '電源開關控制器', q: swQ(p, 'sw') });
+  if (swQ(p, 'p3')) g.push({ n: '3P 電源控制電表', q: swQ(p, 'p3') });
+  if (swQ(p, 'p2')) g.push({ n: '2P 電源控制電表', q: swQ(p, 'p2') });
+  const tb = uList(p).filter(u => u.ctl === 'tbd').length; if (tb) g.push({ n: '待決定', q: tb });
+  return { eyebrow: `點位 ${n}　${kind}`, title: `${loc}　${p.target}`, tparts: [loc, p.target], groups: g.length ? [g] : [] };
 }
 const specText = g => g.map(grp => grp.map(it => it.n + (it.q ? ` ×${it.q}` : '')).join(' · ')).join('　｜　');
 function pointTitle(p, i, qrx) { const H = pointHeader(p, i, qrx); return [`${i + 1}. ${H.tparts[0]}｜${H.tparts[1]}`, specText(H.groups)]; }
@@ -376,13 +411,14 @@ function pointIcons(p) {
   const r = [];
   if (p.kind === 'door') { if (isQr(p)) r.push('qr'); if (irQty(p) > 0) r.push('ir'); if (p.pwr !== 'none') r.push('sw'); }
   if (p.kind === 'meter') r.push(p.phase === '2P' ? 'm2p' : 'm3p');
-  if (p.kind === 'switch') r.push('sw');
+  if (p.kind === 'switch') { if (swQ(p, 'sw')) r.push('sw'); if (swQ(p, 'p3')) r.push('m3p'); if (swQ(p, 'p2')) r.push('m2p'); }
   return r;
 }
 
 function pointIconQty(p, k) {
   if (k === 'qr') return 1;
   if (k === 'ir') return irQty(p);
+  if (p.kind === 'switch') return k === 'sw' ? swQ(p, 'sw') : k === 'm3p' ? swQ(p, 'p3') : swQ(p, 'p2');
   if (k === 'sw') return p.kind === 'door' ? 1 : p.count;
   return p.count;
 }
@@ -398,7 +434,7 @@ function pointSummary(p) {
     return a.join(' · ');
   }
   if (p.kind === 'meter') return `${p.phase} 電表 X${p.count} · ${p.target}`;
-  return `${p.target} 電源開關控制器 X${p.count}`;
+  return `${p.target} ` + (uList(p).filter(u => u.ctl).map(u => `${CTL[u.ctl]}${['sw', 'p3', 'p2'].includes(u.ctl) ? ' X' + (u.q || 0) : ''}`).join('、') || '控制方式未選');
 }
 
 // ---- 設備清單表 ----
@@ -407,7 +443,17 @@ function addAgg(list, label, n, est) {
   if (ex) ex.n += n; else list.push({ k, label, est, n, t: '' });
   list.forEach(x => { if (x.k !== undefined && x.label !== undefined) x.t = x.est ? `(${x.label} ×${x.n})` : `${x.label} ×${x.n}`; });
 }
-function floorOf(loc) { const m = (loc || '').trim().match(/^(B\d+F?|地下\d+樓|\d+F|\d+樓|頂樓|屋頂)/i); return m ? m[1] : ''; }
+function floorOf(loc) {
+  const D = { 零: 0, 〇: 0, 一: 1, 二: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  const cn = t => { if (!t) return 0; if (t === '十') return 10; const m = t.match(/^([一二兩三四五六七八九])?十([一二三四五六七八九])?$/); if (m) return (m[1] ? D[m[1]] : 1) * 10 + (m[2] ? D[m[2]] : 0); return D[t] ?? 0; };
+  const t = (loc || '').trim().replace(/[\s　]/g, '');
+  let m = t.match(/(?:地下|B)([0-9一二三四五六七八九十]+)(?:樓|F|層)?/i);
+  if (m) { const n = /^\d+$/.test(m[1]) ? +m[1] : cn(m[1]); if (n) return 'B' + n; }
+  m = t.match(/(\d+)\s*(?:F|樓|層)/i); if (m) return m[1] + 'F';
+  m = t.match(/([一二兩三四五六七八九十]+)(?:樓|層)/); if (m) { const n = cn(m[1]); if (n) return n + 'F'; }
+  m = t.match(/頂樓|屋頂|頂層/); if (m) return '頂樓';
+  return '';
+}
 function computeTable(S) {
   const rows = [], idx = {};
   const tot = { door: 0, sw: 0, p2: 0, p3: 0, closer: 0 };
@@ -420,15 +466,19 @@ function computeTable(S) {
       r.bookLines = (p.link || '').trim() ? p.link.split('\n').map(x => x.trim()).filter(Boolean) : [S.site.bookingText || '綁智慧活動中心平台預約', S.site.bookingLine].filter(Boolean);
     }
     if (p.kind === 'door') {
-      if (isQr(p)) { r.door.push({ t: '1' }); tot.door += 1; if (p.panels > 0) r.door.push({ t: `加裝門片 ×${p.panels}`, red: true }); }
+      if (!counted(p)) r.door.push({ t: `(${VERDICT[p.verdict].t})` });
+      else if (isQr(p)) { r.door.push({ t: '1' }); tot.door += 1; if (p.panels > 0) r.door.push({ t: `加裝門片 ×${p.panels}`, red: true }); }
       else r.door.push({ t: `${p.mode === 'both' ? '' : p.mode + ' '}門片 ×${p.panels || p.locks || 1}`, red: true });
-      if (p.pwr !== 'none') { addAgg(r.sw, '門禁', 1, false); tot.sw += 1; }
-      if (p.closer > 0) { r.closer += p.closer; tot.closer += p.closer; }
+      if (counted(p) && p.pwr !== 'none') { addAgg(r.sw, '門禁', 1, false); tot.sw += 1; }
+      if (counted(p) && p.closer > 0) { r.closer += p.closer; tot.closer += p.closer; }
     } else if (p.kind === 'meter') {
-      const k = p.phase === '2P' ? 'p2' : 'p3';
-      addAgg(r[k], p.target, p.count, p.est); tot[k] += p.count;
+      const k = p.phase === '2P' ? 'p2' : 'p3', est = p.est || !counted(p);
+      addAgg(r[k], p.target, p.count, est); if (!est) tot[k] += p.count;
     } else {
-      addAgg(r.sw, p.target, p.count, p.est); tot.sw += p.count;
+      uList(p).forEach(u => {
+        if (['sw', 'p3', 'p2'].includes(u.ctl)) { const est = p.est || !counted(p); addAgg(r[u.ctl], p.target, u.q || 1, est); if (!est) tot[u.ctl] += u.q || 1; }
+        else if (u.ctl === 'tbd') addAgg(r.sw, `${p.target}待決定`, 1, true);
+      });
     }
   });
   return { rows, tot };
@@ -438,7 +488,7 @@ function computeTable(S) {
 function computeBom(S) {
   const t = computeTable(S).tot, B = computeBuild(S);
   let qr = 0, locks = 0, ir = 0, closer = 0;
-  S.points.forEach(p => { if (p.kind !== 'door') return; if (isQr(p)) { qr++; locks += lockQty(p); ir += irQty(p); } closer += p.closer || 0; });
+  S.points.forEach(p => { if (p.kind !== 'door' || !counted(p)) return; if (isQr(p)) { qr++; locks += lockQty(p); ir += irQty(p); } closer += p.closer || 0; });
   const mat = n => B.mats.find(m => m.n === n);
   const rows = [['QR 掃碼機', qr, ''], ['陽極鎖', locks, ''], ['陽極鎖外掛盒', locks, ''], ['開門按鈕(紅外線非接觸式感應開關)', ir, ''],
     ['門弓器', closer, ''], ['雲端智慧電表 2P 電表', t.p2, ''], ['雲端智慧電表 3P 電表', t.p3, ''],
@@ -450,7 +500,7 @@ function computeBom(S) {
 }
 function pointChips(p) {
   const r = [];
-  if (p.kind === 'switch' && p.units > 0) r.push(`${p.target || '設備'}共${p.units}台`);
+  if (p.kind === 'switch' && unitCnt(p) > 1) r.push(`${p.target || '設備'}共${unitCnt(p)}台`);
   if (p.kind !== 'door' && (p.box || '').trim() && !(p.photos || []).some(x => (x.box || '').trim())) r.push('電箱位置: ' + p.box.trim());
   return r;
 }
@@ -460,7 +510,7 @@ function fitRects(p) {
   const n = p.photos.length;
   if (!n) return [];
   const strip = true;
-  const ax = .6, aw = hasAssess(p) ? 7.95 : 12.13, ay = 1.9, ah = (strip ? 4.2 : 5.0) - (pointChips(p).length ? .5 : 0), gap = .35, pad = .07;
+  const nh = noteH(p), ax = .6, aw = 12.13, ay = nh ? 1.72 + nh + .12 : 1.9, ah = (strip ? 4.2 : 5.0) - (nh ? nh + .02 : 0) - (pointChips(p).length ? .5 : 0), gap = .35, pad = .07;
   const cw = (aw - gap * (n - 1)) / n;
   return p.photos.map((ph, i) => {
     const s = Math.min((cw - 2 * pad) / ph.w, (ah - 2 * pad) / ph.h), w = ph.w * s, h = ph.h * s;
@@ -835,7 +885,13 @@ async function buildPptx(S, A) {
       if (LP.extra.box) ex(LP.extra.box, 'FFFFFF', RED, RED, false);
       if (LP.extra.alert) ex(LP.extra.alert, 'FFF3C4', 'E0B100', INK, false);
     });
-    if (hasAssess(p)) panel(sl, p);
+    { const L = noteLines(p), nh = noteH(p);
+      if (L.length) {
+        sl.addShape(pptx.ShapeType.rect, { x: LM, y: 1.72, w: CW, h: nh, fill: { color: 'FFFFFF' }, line: { color: RED, width: 1 } });
+        const fs = L.length > 4 ? 10.5 : 12;
+        sl.addText(L.map((x, i) => ({ text: x.t, options: { color: RED, bold: !!x.b, breakLine: i < L.length - 1 } })), { ...T0, x: LM + .12, y: 1.72, w: CW - .24, h: nh, fontSize: fs, valign: 'middle', fit: 'shrink' });
+      }
+    }
     {
       const chips = pointChips(p);
       if (chips.length) {
@@ -881,6 +937,7 @@ function sampleProject(A) { const P = blankProject(); P._draft = true; return P;
 const $ = (s, r = document) => r.querySelector(s);
 function h(tag, attrs, ...kids) {
   const e = document.createElement(tag);
+  if (tag === 'textarea' || (tag === 'input' && (!attrs || !attrs.type || attrs.type === 'text'))) { e.setAttribute('autocapitalize', 'off'); e.setAttribute('autocomplete', 'off'); e.setAttribute('autocorrect', 'off'); e.spellcheck = false; }
   for (const k in (attrs || {})) {
     const v = attrs[k];
     if (v == null || v === false) continue;
@@ -917,7 +974,7 @@ function touch() {
   saveState = '儲存中…'; paintSave();
   clearTimeout(saveTimer);
   const run = async () => { if (composing) { saveTimer = setTimeout(run, 600); return; } const ok = await saveNow(); saveState = ok ? '已自動儲存' : '此瀏覽器無法自動儲存'; paintSave(); };
-  saveTimer = setTimeout(run, 1500);
+  saveTimer = setTimeout(run, 3000);
 }
 // 輸入中文(輸入法組字中)時不存檔,避免大檔寫入卡住輸入法
 let composing = false;
@@ -929,7 +986,9 @@ function meta(P) { return { id: P.id, name: P.site.name || '', client: P.site.cl
 async function saveNow() {
   if (S.isSample || (S._draft && !S._edited)) return true;
   if (!S.id) S.id = newId();
+  const t0 = performance.now();
   const ok = await kvSet('p:' + S.id, S);
+  window._saveMs = Math.round(performance.now() - t0); window._saveMB = (S.points.reduce((a, p) => a + p.photos.reduce((b, x) => b + (x.src || '').length, 0), 0) + ((S.site.cover || {}).src || '').length) / 1048576;
   if (ok) { await kvSet('m:' + S.id, meta(S)); await kvSet('cur', S.id); }
   return ok;
 }
@@ -959,6 +1018,8 @@ function normalize(P) {
     if (!p.mats) p.mats = [];
     if (p.days === undefined) p.days = 0;
     if (p.link === undefined) p.link = '';
+    if (p.wp === undefined) p.wp = p.mats.some(m => m.n === '戶外防水殼') ? 'need' : 'no';
+    if (p.kind === 'switch' && !p.us) p.us = [{ id: nid(), ctl: 'sw', q: p.count || 1, cnt: p.units || 1, how: '' }];
     if (p.kind === 'door') { if (p.lockSt === undefined) p.lockSt = p.locks > 0 ? 'add' : ''; if (p.irSt === undefined) p.irSt = p.ir > 0 ? 'add' : ''; }
     if (p.box === undefined) p.box = '';
     if (p.units === undefined) p.units = 0;
@@ -1164,7 +1225,8 @@ function photoBlock(p, pi, rerenderBlocks) {
 
   function paintTools() {
     cnt.textContent = `${ph.marks.length} 個標記${ph.arrows.length ? `、${ph.arrows.length} 個箭頭` : ''}`;
-    const list = [...(PRESETS[p.kind] || []), { k: 'custom', t: '', w: .1, h: .1, label: '自訂文字' }];
+    const nums = p.kind === 'switch' && (p.us || []).length > 1 ? p.us.map((u, i) => ({ k: 'n' + i, label: `${i + 1}號`, t: `${i + 1}號`, w: .1, h: .22 })) : [];
+    const list = [...nums, ...(PRESETS[p.kind] || []), { k: 'custom', t: '', w: .1, h: .1, label: '自訂文字' }];
     toolHost.replaceChildren(
       h('div', { class: 'chips' },
         h('span', { class: 'chiplabel' }, '標記:'),
@@ -1285,7 +1347,8 @@ function listView() {
     h('div', { class: 'row wrap' },
       h('button', { type: 'button', class: 'btn', onclick: async () => { await flush(); const ms = await listMetas(); const all = []; for (const m of ms) all.push(await kvGet('p:' + m.id)); await fileOut(new Blob([JSON.stringify({ projects: all })], { type: 'application/json' }), '案場備份_全部_' + new Date().toISOString().slice(0, 10) + '.json'); st.textContent = `已備份 ${all.length} 個案場。`; } }, '備份全部'),
       h('button', { type: 'button', class: 'btn', onclick: () => inp.click() }, '從備份檔還原')),
-    st, inp);
+    st, inp,
+    h('p', { class: 'hint', style: 'margin-top:18px;opacity:.7' }, window._saveMs != null ? `診斷:上次存檔 ${window._saveMs} 毫秒、照片資料約 ${window._saveMB.toFixed(1)} MB(輸入卡頓時請回報這兩個數字)` : '診斷:尚無存檔紀錄'));
 }
 
 function boxChips() { const used = [...new Set(S.points.flatMap(x => [x.box, ...x.photos.map(y => y.box)]).map(x => (x || '').trim()).filter(Boolean))]; return [...new Set([...used, ...BOXES])].slice(0, 9); }
@@ -1317,13 +1380,37 @@ function wpField(p, refit) {
   const root = h('div', { class: 'fld', style: 'grid-column:1/-1' });
   const get = () => (p.mats || []).find(m => m.n === '戶外防水殼');
   const paint = () => {
-    const m = get(), was0 = hasAssess(p);
-    const seg = h('div', { class: 'seg', style: 'grid-template-columns:repeat(2,1fr)', role: 'group' }, [[false, '不需要'], [true, '需要']].map(([k, t]) => h('button', { type: 'button', class: `segb ${k ? 'add' : 'have'}${!!m === k ? ' on' : ''}`, onclick: () => { const w = hasAssess(p); if (k && !get()) p.mats.push({ n: '戶外防水殼', q: 1 }); if (!k) p.mats = p.mats.filter(x => x.n !== '戶外防水殼'); S._edited = true; touch(); paint(); if (w !== hasAssess(p)) refit(); } }, t)));
+    const st = p.wp || 'no', m = get();
+    const seg = h('div', { class: 'seg', style: 'grid-template-columns:repeat(3,1fr)', role: 'group' }, [['no', '不需要', 'have'], ['need', '需要', 'add'], ['ask', '還沒確認', 'ask']].map(([k, t, c]) => h('button', { type: 'button', class: `segb ${c}${st === k ? ' on' : ''}`, 'aria-pressed': String(st === k), onclick: () => { p.wp = k; if (k === 'need' && !get()) p.mats.push({ n: '戶外防水殼', q: 1 }); if (k !== 'need') p.mats = p.mats.filter(x => x.n !== '戶外防水殼'); S._edited = true; touch(); paint(); refit(); } }, t)));
     const val = h('span', { class: 'val' }, String(m ? m.q : 0));
-    const stp = m ? h('div', { class: 'stepper', style: 'margin-top:8px' }, h('span', { class: 'hint' }, '數量'),
-      h('button', { type: 'button', class: 'iconbtn', 'aria-label': '減少', onclick: () => { m.q = Math.max(1, m.q - 1); val.textContent = String(m.q); S._edited = true; touch(); } }, '−'), val,
-      h('button', { type: 'button', class: 'iconbtn', 'aria-label': '增加', onclick: () => { m.q += 1; val.textContent = String(m.q); S._edited = true; touch(); } }, '＋')) : null;
-    root.replaceChildren(...[h('span', { class: 'fl' }, '戶外防水殼(安裝在戶外才需要,數量現場決定)'), seg, stp].filter(Boolean));
+    const stp = st === 'need' && m ? h('div', { class: 'stepper', style: 'margin-top:8px' }, h('span', { class: 'hint' }, '數量'),
+      h('button', { type: 'button', class: 'iconbtn', 'aria-label': '減少', onclick: () => { m.q = Math.max(1, m.q - 1); val.textContent = String(m.q); S._edited = true; touch(); refit(); } }, '−'), val,
+      h('button', { type: 'button', class: 'iconbtn', 'aria-label': '增加', onclick: () => { m.q += 1; val.textContent = String(m.q); S._edited = true; touch(); refit(); } }, '＋')) : null;
+    root.replaceChildren(...[h('span', { class: 'fl' }, '戶外防水殼(裝在戶外才需要,數量現場決定)'), seg, stp].filter(Boolean));
+  };
+  paint(); return root;
+}
+const CTL_CLS = { sw: 'have', p3: 'have', p2: 'have', tbd: 'ask', none: 'no' };
+function unitsEditor(p, refit, paintTitle) {
+  const root = h('div', { class: 'fld', style: 'grid-column:1/-1' });
+  const changed = () => { S._edited = true; touch(); paintTitle(); refit(); };
+  const step = (u, key, min, lab) => { const val = h('span', { class: 'val' }, String(u[key] || 0)); return h('div', { class: 'stepper', style: 'margin-top:8px' }, h('span', { class: 'hint' }, lab),
+    h('button', { type: 'button', class: 'iconbtn', 'aria-label': '減少', onclick: () => { u[key] = Math.max(min, (u[key] || min) - 1); val.textContent = String(u[key]); changed(); } }, '−'), val,
+    h('button', { type: 'button', class: 'iconbtn', 'aria-label': '增加', onclick: () => { u[key] = (u[key] || 0) + 1; val.textContent = String(u[key]); changed(); } }, '＋')); };
+  const card = (u, i) => {
+    const seg = h('div', { class: 'seg', style: 'grid-template-columns:repeat(2,1fr)', role: 'group' }, Object.entries(CTL).map(([k, t]) => h('button', { type: 'button', class: `segb ${CTL_CLS[k]}${u.ctl === k ? ' on' : ''}`, 'aria-pressed': String(u.ctl === k), onclick: () => { u.ctl = k; changed(); paint(); } }, t)));
+    const ta = h('textarea', { rows: 2, placeholder: '施工方式,例:需由冷氣電源截斷', oninput: e => { u.how = e.target.value; S._edited = true; touch(); } }, u.how || '');
+    return h('div', { class: 'work' },
+      h('div', { class: 'row' }, h('strong', { style: 'flex:1' }, p.us.length > 1 ? `${i + 1} 號${p.target || '設備'}` : (p.target || '設備')), p.us.length > 1 ? twoTap('刪除', () => { p.us = p.us.filter(x => x !== u); changed(); paint(); }, 'btn ghost danger sm') : null),
+      h('span', { class: 'fl' }, '控制方式(必選)'), seg,
+      ['sw', 'p3', 'p2'].includes(u.ctl) ? step(u, 'q', 1, '要裝幾顆') : null,
+      step(u, 'cnt', 1, `這一組控制幾台${p.target || '設備'}`),
+      h('div', { class: 'chips' }, HOW_SRC.map(c => h('button', { type: 'button', class: 'chip sm', onclick: () => { u.how = (u.how || '') + c; ta.value = u.how; S._edited = true; touch(); } }, c))), ta);
+  };
+  const paint = () => {
+    if (!p.us || !p.us.length) p.us = [{ id: nid(), ctl: '', q: 1, cnt: 1, how: '' }];
+    root.replaceChildren(h('span', { class: 'fl' }, `每一台${p.target || '設備'}怎麼控制(多台會自動編號 1號、2號…)`), ...p.us.map(card),
+      h('button', { type: 'button', class: 'btn', onclick: () => { p.us.push({ id: nid(), ctl: '', q: 1, cnt: 1, how: '' }); changed(); paint(); } }, `＋ 再加一台/一組`));
   };
   paint(); return root;
 }
@@ -1350,7 +1437,7 @@ async function lookupAddr(name) {
     const road = a.road || '', no = a.house_number ? String(a.house_number).replace(/號$/, '') + '號' : '';
     const street = road + no;
     if (!dist) return;
-    if (!out.some(o => o.dist === dist && o.street === street)) out.push({ city, dist, street, label: `${city}${dist}${street}` });
+    if (!out.some(o => o.dist === dist && o.street === street)) out.push({ city, dist, street, official: String(x.name || a.amenity || '').trim(), label: `${city}${dist}${street}` });
   });
   return out;
 }
@@ -1368,7 +1455,8 @@ function nameAddrPick(s) {
       else {
         status.textContent = auto && !s.dist && !(s.address || '').trim() ? '已自動帶入第一筆,請確認;不對可點下方其他結果。' : '點選正確的地址:';
         if (auto && !s.dist && !(s.address || '').trim()) { s.city = res[0].city; s.dist = res[0].dist; s.address = res[0].street; S._edited = true; touch(); }
-        list.replaceChildren(...res.map(c => h('button', { type: 'button', class: 'chip sm', onclick: () => apply(c) }, c.label)));
+        const off = res.find(c => c.official && c.official !== (s.name || '').trim());
+        list.replaceChildren(...res.map(c => h('button', { type: 'button', class: 'chip sm', onclick: () => apply(c) }, c.label)), off ? h('button', { type: 'button', class: 'chip sm', onclick: () => { s.name = off.official; S._edited = true; touch(); render(); } }, `案名改為「${off.official}」`) : null);
         if (auto && s.dist) { const d = document.querySelectorAll('.addrsel'); d.forEach(x => { if (x.tagName === 'SELECT' && x.dataset.k === 'dist') x.value = s.dist; if (x.tagName === 'INPUT') x.value = s.address || ''; }); }
       }
     } catch (e) { status.textContent = '目前無法查詢(可能沒有網路),請手動輸入。'; }
@@ -1481,10 +1569,10 @@ function editView() {
   if (p.kind === 'switch') f.append(
     chkIn('預估(尚未測試,清單加括號)', p, 'est'),
     (() => { const t = textIn(p, 'target', '例:冷氣', paintTitle); return h('div', { style: 'display:contents' }, field('控制對象', t), chipRow(TARGETS, v => { p.target = v; t.value = v; S._edited = true; touch(); paintTitle(); })); })(),
-    field('數量(控制器顆數)', numIn(p, 'count', paintTitle)),
-    field('被控制設備台數(例:冷氣共幾台)', numIn(p, 'units', refit), '會標「冷氣共N台」,請一併拍冷氣本體。'));
+    unitsEditor(p, refit, paintTitle));
   f.append(chkIn('場租預約連動', p, 'booking'), field('備註(現場特殊狀況,顯示在每頁右下角備註框)', h('textarea', { rows: 3, placeholder: '例:目前為拉門,後續需改為雙開門', oninput: e => { p.note = e.target.value; S._edited = true; touch(); } }, p.note || '')));
-  const al = h('textarea', { rows: 2, placeholder: '例:未斷電測試\n預估2P X 4顆', oninput: e => { p.alert = e.target.value; S._edited = true; touch(); refit(); } }, p.alert || '');
+  let refitT = 0;
+  const al = h('textarea', { rows: 2, placeholder: '例:未斷電測試\n預估2P X 4顆', oninput: e => { p.alert = e.target.value; S._edited = true; touch(); clearTimeout(refitT); refitT = setTimeout(refit, 600); } }, p.alert || '');
   f.append(field('黃底提醒框(顯示在第一張照片左上角,可留空)', al));
   paintBlocks();
   return h('section', { class: 'view' },
@@ -1502,7 +1590,7 @@ function assessSection(p, refit) {
   const changed = (was) => { S._edited = true; touch(); if (was !== stat()) refit(); };
 
   function paint() {
-    const seg = h('div', { class: 'seg', role: 'group', 'aria-label': '可否施工' },
+    const seg = h('div', { class: 'seg', style: 'grid-template-columns:repeat(3,1fr)', role: 'group', 'aria-label': '可否施工' },
       Object.entries(VERDICT).map(([k, v]) => h('button', { type: 'button', class: `segb ${k}${p.verdict === k ? ' on' : ''}`, 'aria-pressed': String(p.verdict === k), onclick: () => { const was = stat(); p.verdict = k; changed(was); paint(); } }, v.t)));
 
     const works = h('div', { class: 'works' });
@@ -1553,6 +1641,9 @@ function exportView() {
   const warns = [];
   if (!S.site.name) warns.push('案場尚未填寫名稱');
   if (!S.site.cover) warns.push('封面沒有外觀照');
+  if (!S.site.client) warns.push('客戶還沒選');
+  if (!S.site.dist) warns.push('地址還沒選「區」');
+  if (!/\d/.test(S.site.address || '')) warns.push('地址沒有門牌號(例:○○路123號)');
   S.points.forEach((p, i) => {
     const nm = `第 ${i + 1} 點位(${p.loc || '未命名'})`;
     pendingItems(p).forEach(x => warns.push(`${nm}:${x}`));
