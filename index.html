@@ -134,6 +134,13 @@ input[type=number]{font-variant-numeric:tabular-nums}
 .pc-t{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .badge{font-size:12px;background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:2px 8px}
 .row.wrap{flex-wrap:wrap}
+.segb.add.on{background:#ddf1e5;border-color:#1d7a4c;color:#1d7a4c}
+.segb.have.on{background:#e3eef5;border-color:#156082;color:#156082}
+.segb.ask.on{background:#fff0bf;border-color:#b07a00;color:#7a4b00}
+.pmeta.ok{color:#1d7a4c}
+.pendbox{border:1px solid #e0b100;background:#fff8dc;border-radius:12px;padding:10px 14px;font-size:13.5px;color:#5c4300}
+.pendbox ul{margin:6px 0 0;padding-left:18px}
+.pendbox.done{border-color:#1d7a4c;background:#e9f6ee;color:#1d7a4c}
 @media (prefers-reduced-motion:no-preference){.btn,.chip,.tab{transition:background-color .12s,color .12s}}
 </style>
 <header class="top"><div class="top-in"><h1>場勘報告產生器</h1><span id="sub"></span><span id="savestate" role="status"></span></div></header>
@@ -278,6 +285,32 @@ const num = v => { v = parseInt(v, 10); return isNaN(v) || v < 0 ? 0 : v; };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const workLine = w => `${w.target || ''}${w.how || ''}`.trim();
 const cleanWorks = p => (p.works || []).filter(w => workLine(w));
+const CLIENTS = [{ g: '台固', n: '永佳樂有線電視' }, { g: '台固', n: '紅樹林有線電視' }, { g: '凱擘', n: '全聯有線電視' }, { g: '凱擘', n: '新唐城有線電視' }];
+const lockQty = p => (p.lockSt === 'add' ? (p.locks || 0) : 0);
+const irQty = p => (p.irSt === 'add' ? (p.ir || 0) : 0);
+function pendingItems(p) {
+  const r = [];
+  if (!(p.loc || '').trim()) r.push('位置沒填');
+  if (!(p.photos || []).length) r.push('沒有照片');
+  if (p.kind === 'door' && isQr(p)) {
+    if (!p.lockSt) r.push('陽極鎖/外掛盒:要加購還是現場已有?');
+    else if (p.lockSt === 'add' && !(p.locks > 0)) r.push('陽極鎖/外掛盒:加購幾個?');
+    if (!p.irSt) r.push('開門開關:要加購還是現場已有?');
+    else if (p.irSt === 'add' && !(p.ir > 0)) r.push('開門開關:加購幾個?');
+  }
+  const hasMark = re => (p.photos || []).some(ph => (ph.marks || []).some(m => re.test(m.text || '')));
+  if (p.kind === 'door') {
+    if (p.qr && !hasMark(/QR/i)) r.push('QR 掃碼機:照片上還沒標註安裝位置');
+    if (p.lockSt === 'add' && !hasMark(/陽極鎖|外掛盒/)) r.push('陽極鎖+外掛盒:照片上還沒標註安裝位置');
+    if (p.irSt === 'add' && !hasMark(/紅外線|感應開關|開門/)) r.push('開門開關:照片上還沒標註安裝位置');
+  } else if (!(p.photos || []).some(ph => (ph.marks || []).length)) r.push(p.kind === 'meter' ? '電表:照片上還沒標註安裝位置/控制範圍' : '控制器:照片上還沒標註安裝位置/控制設備');
+  if (p.kind !== 'door' && !(p.box || '').trim()) r.push('電箱位置沒填');
+  if (p.kind === 'switch' && /冷氣/.test(p.target || '') && !(p.units > 0)) r.push('冷氣台數沒填(並建議拍冷氣本體)');
+  if (p.kind === 'meter' && /\d/.test(p.note || '') && p.count < Math.max(...(p.note.match(/\d+/g) || [0]).map(Number))) r.push(`備註提到數字(${p.note}),但數量是 ${p.count},請確認`);
+  if (!p.verdict) r.push('可否施工還沒判定');
+  return r;
+}
+function isQr(p) { return p.kind === 'door' && !!(p.qr || (p.photos || []).some(ph => (ph.marks || []).some(m => /QR/i.test(m.text || '')))); }
 function hasAssess(p) { return !!(p.verdict || cleanWorks(p).length || (p.days || 0) > 0 || (p.mats || []).length || (p.link || '').trim()); }
 function howChips(p) {
   const eq = p.kind === 'meter' ? [`增設${p.phase}電源控制電表`] : p.kind === 'switch' ? ['增設電源開關控制器'] : ['增設陽極鎖+外掛盒', '增設紅外線感應開關', '增設 QR 掃碼機', '增設電源開關控制器'];
@@ -295,8 +328,8 @@ function computeBuild(S) {
 }
 
 function newPoint(kind) {
-  const b = { id: nid(), kind, loc: '', row: '', booking: false, note: '', photos: [], verdict: '', works: [], days: 0, mats: [], link: '' };
-  if (kind === 'door') Object.assign(b, { qr: false, locks: 1, ir: 1, panels: 0, mode: 'both', pwr: 'none', closer: 0 });
+  const b = { id: nid(), kind, loc: '', row: '', booking: false, note: '', photos: [], verdict: '', works: [], days: 0, mats: [], link: '', box: '', units: 0 };
+  if (kind === 'door') Object.assign(b, { qr: true, locks: 0, lockSt: '', ir: 0, irSt: '', panels: 0, mode: 'both', pwr: 'none', closer: 0 });
   if (kind === 'meter') Object.assign(b, { phase: '3P', count: 1, target: '燈具', est: false });
   if (kind === 'switch') Object.assign(b, { target: '冷氣', count: 1, est: false });
   return b;
@@ -307,11 +340,13 @@ function pointHeader(p, i, qrx) {
   const n = String(i + 1).padStart(2, '0'), loc = p.loc || '(未命名位置)';
   const kind = KIND_NAME[p.kind];
   if (p.kind === 'door') {
-    const lead = p.qr ? [{ n: '雲端門禁系統', q: 1 }] : (p.mode !== 'both' ? [{ n: p.mode }] : []);
+    const lead = isQr(p) ? [{ n: '雲端門禁系統', q: 1 }] : (p.mode !== 'both' ? [{ n: p.mode }] : []);
     const items = [];
-    if (p.qr) items.push({ n: 'QR 掃碼機', q: qrx ? 1 : 0 });
-    if (p.locks > 0) { items.push({ n: '陽極鎖', q: p.locks }); items.push({ n: '陽極鎖外掛盒', q: p.locks }); }
-    if (p.ir > 0) items.push({ n: '紅外線非接觸式感應開關', q: p.ir });
+    if (isQr(p)) items.push({ n: 'QR 掃碼機', q: qrx ? 1 : 0 });
+    if (p.lockSt === 'add' && p.locks > 0) { items.push({ n: '陽極鎖', q: p.locks }); items.push({ n: '陽極鎖外掛盒', q: p.locks }); }
+    else if (p.lockSt === 'have') items.push({ n: '陽極鎖(現場已有)' });
+    if (p.irSt === 'add' && p.ir > 0) items.push({ n: '紅外線非接觸式感應開關', q: p.ir });
+    else if (p.irSt === 'have') items.push({ n: '開門開關(現場已有)' });
     if (p.closer > 0) items.push({ n: '門弓器', q: p.closer });
     return { eyebrow: `點位 ${n}　${kind}`, title: `${loc}　門禁`, tparts: [loc, '門禁'], groups: [lead, items].filter(g => g.length) };
   }
@@ -326,7 +361,7 @@ function pointTitle(p, i, qrx) { const H = pointHeader(p, i, qrx); return [`${i 
 
 function pointIcons(p) {
   const r = [];
-  if (p.kind === 'door') { if (p.qr) r.push('qr'); if (p.ir > 0) r.push('ir'); if (p.pwr !== 'none') r.push('sw'); }
+  if (p.kind === 'door') { if (isQr(p)) r.push('qr'); if (irQty(p) > 0) r.push('ir'); if (p.pwr !== 'none') r.push('sw'); }
   if (p.kind === 'meter') r.push(p.phase === '2P' ? 'm2p' : 'm3p');
   if (p.kind === 'switch') r.push('sw');
   return r;
@@ -334,7 +369,7 @@ function pointIcons(p) {
 
 function pointIconQty(p, k) {
   if (k === 'qr') return 1;
-  if (k === 'ir') return p.ir;
+  if (k === 'ir') return irQty(p);
   if (k === 'sw') return p.kind === 'door' ? 1 : p.count;
   return p.count;
 }
@@ -342,9 +377,9 @@ function pointIconQty(p, k) {
 function pointSummary(p) {
   if (p.kind === 'door') {
     const a = [];
-    a.push(p.qr ? '雲端門禁' : (p.mode === 'both' ? '門片' : p.mode));
-    if (p.locks) a.push('鎖X' + p.locks);
-    if (p.ir) a.push('感應X' + p.ir);
+    a.push(isQr(p) ? '雲端門禁' : (p.mode === 'both' ? '門片' : p.mode));
+    if (lockQty(p)) a.push('鎖X' + lockQty(p)); else if (p.lockSt === 'have') a.push('鎖:已有');
+    if (irQty(p)) a.push('感應X' + irQty(p)); else if (p.irSt === 'have') a.push('感應:已有');
     if (p.pwr !== 'none') a.push('斷電控制');
     if (p.closer) a.push('門弓器X' + p.closer);
     return a.join(' · ');
@@ -354,6 +389,11 @@ function pointSummary(p) {
 }
 
 // ---- 設備清單表 ----
+function addAgg(list, label, n, est) {
+  const k = (est ? 'e:' : '') + label, ex = list.find(x => x.k === k);
+  if (ex) ex.n += n; else list.push({ k, label, est, n, t: '' });
+  list.forEach(x => { if (x.k !== undefined && x.label !== undefined) x.t = x.est ? `(${x.label} ×${x.n})` : `${x.label} ×${x.n}`; });
+}
 function computeTable(S) {
   const rows = [], idx = {};
   const tot = { door: 0, sw: 0, p2: 0, p3: 0, closer: 0 };
@@ -361,23 +401,44 @@ function computeTable(S) {
     const name = (p.row || p.loc || '(未命名)').trim();
     if (!(name in idx)) { idx[name] = rows.length; rows.push({ name, door: [], sw: [], p2: [], p3: [], closer: 0, booking: false, bookLines: [] }); }
     const r = rows[idx[name]];
-    if ((p.booking || (p.link || '').trim()) && !r.bookLines.length) {
+    if ((S.site.bookAll || p.booking || (p.link || '').trim()) && !r.bookLines.length) {
       r.booking = true;
       r.bookLines = (p.link || '').trim() ? p.link.split('\n').map(x => x.trim()).filter(Boolean) : [S.site.bookingText || '綁智慧活動中心平台預約', S.site.bookingLine].filter(Boolean);
     }
     if (p.kind === 'door') {
-      if (p.qr) { r.door.push({ t: '1' }); tot.door += 1; if (p.panels > 0) r.door.push({ t: `加裝門片 ×${p.panels}`, red: true }); }
+      if (isQr(p)) { r.door.push({ t: '1' }); tot.door += 1; if (p.panels > 0) r.door.push({ t: `加裝門片 ×${p.panels}`, red: true }); }
       else r.door.push({ t: `${p.mode === 'both' ? '' : p.mode + ' '}門片 ×${p.panels || p.locks || 1}`, red: true });
-      if (p.pwr !== 'none') { r.sw.push({ t: '門禁 ×1' }); tot.sw += 1; }
+      if (p.pwr !== 'none') { addAgg(r.sw, '門禁', 1, false); tot.sw += 1; }
       if (p.closer > 0) { r.closer += p.closer; tot.closer += p.closer; }
     } else if (p.kind === 'meter') {
       const k = p.phase === '2P' ? 'p2' : 'p3';
-      r[k].push({ t: p.est ? `(${p.target} ×${p.count})` : `${p.target} ×${p.count}` }); tot[k] += p.count;
+      addAgg(r[k], p.target, p.count, p.est); tot[k] += p.count;
     } else {
-      r.sw.push({ t: p.est ? `(${p.target} ×${p.count})` : `${p.target} ×${p.count}` }); tot.sw += p.count;
+      addAgg(r.sw, p.target, p.count, p.est); tot.sw += p.count;
     }
   });
   return { rows, tot };
+}
+
+// ---- 設備明細表(依點位資料自動加總) ----
+function computeBom(S) {
+  const t = computeTable(S).tot, B = computeBuild(S);
+  let qr = 0, locks = 0, ir = 0, closer = 0;
+  S.points.forEach(p => { if (p.kind !== 'door') return; if (isQr(p)) { qr++; locks += lockQty(p); ir += irQty(p); } closer += p.closer || 0; });
+  const mat = n => B.mats.find(m => m.n === n);
+  const rows = [['QR 掃碼機', qr, ''], ['陽極鎖', locks, ''], ['陽極鎖外掛盒', locks, ''], ['開門按鈕(紅外線非接觸式感應開關)', ir, ''],
+    ['門弓器', closer, ''], ['雲端智慧電表 2P 電表', t.p2, ''], ['雲端智慧電表 3P 電表', t.p3, ''],
+    ['戶外防水殼', mat('戶外防水殼') ? mat('戶外防水殼').q : 0, mat('戶外防水殼') ? [...new Set(mat('戶外防水殼').pts)].join('、') : ''],
+    ['電源開關控制器', t.sw, '']];
+  B.mats.filter(m => m.n !== '戶外防水殼').forEach(m => rows.push([m.n, m.q, [...new Set(m.pts)].join('、')]));
+  rows.push(['安裝天數', B.days || 0, B.pd > 0 ? `${B.crew} 人施工,合計 ${B.pd} 人天` : '']);
+  return rows;
+}
+function pointChips(p) {
+  const r = [];
+  if (p.kind === 'switch' && p.units > 0) r.push(`${p.target || '設備'}共${p.units}台`);
+  if (p.kind !== 'door' && (p.box || '').trim()) r.push('電箱位置: ' + p.box.trim());
+  return r;
 }
 
 // ---- 照片在投影片上的位置(英吋) ----
@@ -385,7 +446,7 @@ function fitRects(p) {
   const n = p.photos.length;
   if (!n) return [];
   const strip = pointIcons(p).length > 0 || !!p.note;
-  const ax = .6, aw = hasAssess(p) ? 7.95 : 12.13, ay = 1.9, ah = strip ? 4.2 : 5.0, gap = .35, pad = .07;
+  const ax = .6, aw = hasAssess(p) ? 7.95 : 12.13, ay = 1.9, ah = (strip ? 4.2 : 5.0) - (pointChips(p).length ? .5 : 0), gap = .35, pad = .07;
   const cw = (aw - gap * (n - 1)) / n;
   return p.photos.map((ph, i) => {
     const s = Math.min((cw - 2 * pad) / ph.w, (ah - 2 * pad) / ph.h), w = ph.w * s, h = ph.h * s;
@@ -427,22 +488,57 @@ function layoutPhoto(ph, W, H, alertText) {
   const boxOf = m => ({ x: m.x * W, y: m.y * H, w: m.w * W, h: m.h * H });
   const out = {};
   ph.marks.forEach(m => out[m.id] = { box: boxOf(m), label: null, arrows: [] });
+  const extra = {};
+  if (ph.caption) { const z = labelSize(ph.caption, W); extra.caption = { x: .08, y: H - z.h - .08, w: z.w, h: z.h, lines: z.lines }; }
+  if (alertText) { const z = labelSize(alertText, W); extra.alert = { x: .1, y: .1, w: z.w, h: z.h, lines: z.lines }; }
+  const ov = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  const placed = [];
+  Object.values(extra).forEach(e => placed.push({ x: e.x, y: e.y, w: e.w, h: e.h }));
+  // 手動擺放的標籤先占位
+  const todo = [];
   ph.marks.forEach(m => {
     if ((m.to && byId[m.to]) || !m.text) return;
     const boxes = [m, ...ph.marks.filter(f => f.to === m.id)].map(boxOf);
     const ux = Math.min(...boxes.map(b => b.x)), ux2 = Math.max(...boxes.map(b => b.x + b.w));
     const uy = Math.min(...boxes.map(b => b.y)), uy2 = Math.max(...boxes.map(b => b.y + b.h));
     const sz = labelSize(m.text, W);
-    let cx, cy;
-    if (m.lx != null) { cx = m.lx * W; cy = m.ly * H; }
-    else { cx = (ux + ux2) / 2; const gap = .3; cy = uy - gap - sz.h / 2 >= sz.h / 2 ? uy - gap - sz.h / 2 : uy2 + gap + sz.h / 2; }
-    const L = { x: clamp(cx - sz.w / 2, 0, W - sz.w), y: clamp(cy - sz.h / 2, 0, H - sz.h), w: sz.w, h: sz.h, lines: sz.lines };
-    out[m.id].label = L;
-    out[m.id].arrows = boxes.map(b => arrowBetween(L, b)).filter(Boolean);
+    const item = { m, boxes, ux, ux2, uy, uy2, sz };
+    if (m.lx != null) {
+      const L = { x: clamp(m.lx * W - sz.w / 2, 0, W - sz.w), y: clamp(m.ly * H - sz.h / 2, 0, H - sz.h), w: sz.w, h: sz.h, lines: sz.lines };
+      out[m.id].label = L; out[m.id].arrows = boxes.map(b => arrowBetween(L, b)).filter(Boolean); placed.push(L);
+    } else todo.push(item);
   });
-  const extra = {};
-  if (ph.caption) { const z = labelSize(ph.caption, W); extra.caption = { x: .08, y: H - z.h - .08, w: z.w, h: z.h, lines: z.lines }; }
-  if (alertText) { const z = labelSize(alertText, W); extra.alert = { x: .1, y: .1, w: z.w, h: z.h, lines: z.lines }; }
+  const markBoxes = ph.marks.map(boxOf);
+  // 自動擺放:避開其他標籤、標記框,並盡量靠近照片邊緣(少蓋住照片主體)
+  todo.sort((a, b) => a.uy - b.uy || a.ux - b.ux).forEach(it => {
+    const { sz } = it, cx0 = (it.ux + it.ux2) / 2, cy0 = (it.uy + it.uy2) / 2, cand = [];
+    [.22, .5].forEach(g => {
+      [0, -.6, .6, -1.2, 1.2].forEach(k => {
+        const x = cx0 + k * sz.w - sz.w / 2;
+        cand.push({ x, y: it.uy - g - sz.h }, { x, y: it.uy2 + g });
+      });
+      [0, -.8, .8].forEach(k => {
+        const y = cy0 + k * sz.h - sz.h / 2;
+        cand.push({ x: it.ux - g - sz.w, y }, { x: it.ux2 + g, y });
+      });
+    });
+    cand.push({ x: cx0 - sz.w / 2, y: .08 }, { x: cx0 - sz.w / 2, y: H - sz.h - .08 });
+    let best = null;
+    cand.forEach(c => {
+      const L = { x: clamp(c.x, 0, W - sz.w), y: clamp(c.y, 0, H - sz.h), w: sz.w, h: sz.h };
+      let sc = (Math.abs(L.x - c.x) + Math.abs(L.y - c.y)) * 40;
+      placed.forEach(q => { sc += ov(L, q) * 4000; });
+      markBoxes.forEach(q => { sc += ov(L, q) * 1500; });
+      if (!it.boxes.some(b => arrowBetween(L, b))) sc += 500;
+      const dx = Math.max(0, Math.max(it.ux - (L.x + L.w), L.x - it.ux2)), dy = Math.max(0, Math.max(it.uy - (L.y + L.h), L.y - it.uy2));
+      sc += Math.hypot(dx, dy) * 3;
+      const edge = Math.min(L.x, W - L.x - L.w, L.y, H - L.y - L.h);
+      sc += edge * 1.2;
+      if (!best || sc < best.sc) best = { sc, L };
+    });
+    const L = { ...best.L, lines: sz.lines };
+    out[it.m.id].label = L; out[it.m.id].arrows = it.boxes.map(b => arrowBetween(L, b)).filter(Boolean); placed.push(L);
+  });
   return { marks: out, extra };
 }
 
@@ -472,7 +568,11 @@ async function buildPptx(S, A) {
   { let cur = [], h0 = 0; assessRows.forEach(r => { const hh = Math.max(.55, rowLines(r) * .21 + .24); if (h0 + hh > 4.2 && cur.length) { assessChunks.push(cur); cur = []; h0 = 0; } cur.push(r); h0 += hh; }); if (cur.length) assessChunks.push(cur); }
   const matChunks = [];
   for (let k = 0; k < B.mats.length; k += 10) matChunks.push(B.mats.slice(k, k + 10));
-  const total = 3 + assessChunks.length + matChunks.length + S.points.length;
+  const BOMR = computeBom(S);
+  const eqR = 2 + T.rows.reduce((a, r) => a + Math.max(1, r.door.length, r.sw.length, r.p2.length, r.p3.length), 0), bR = BOMR.length + 1;
+  const mRow = Math.min(.3, 3.6 / (eqR + bR)), merge = mRow >= .21;
+  const cs = mRow >= .28 ? 11 : mRow >= .26 ? 10.5 : mRow >= .24 ? 10 : mRow >= .22 ? 9.5 : 9;
+  const total = (merge ? 2 : 4) + assessChunks.length + matChunks.length + S.points.length;
   let pageNo = 0;
   const LM = .6, RM = 12.73, CW = RM - LM;
   const T0 = { fontFace: FONT, margin: 0 };
@@ -500,23 +600,35 @@ async function buildPptx(S, A) {
   // ===== 1 封面 =====
   let s = pptx.addSlide();
   pageNo++;
-  const PX = 7.9, PW = 13.333 - PX;
+  const PX = merge ? 8.3 : 7.9, PW = 13.333 - PX;
   if (S.site.cover) {
     const cropped = await cropToAspect(S.site.cover, PW / 7.5);
     if (cropped) s.addImage({ data: cropped, x: PX, y: 0, w: PW, h: 7.5 });
     else { s.addShape(pptx.ShapeType.rect, { x: PX, y: 0, w: PW, h: 7.5, fill: { color: SOFT }, line: { type: 'none' } }); const c = S.site.cover, k = Math.min(PW / c.w, 7.5 / c.h); s.addImage({ data: c.src, x: PX + (PW - c.w * k) / 2, y: (7.5 - c.h * k) / 2, w: c.w * k, h: c.h * k }); }
   } else s.addShape(pptx.ShapeType.rect, { x: PX, y: 0, w: PW, h: 7.5, fill: { color: NAVY }, line: { type: 'none' } });
+  const date = (S.site.date || '').replace(/-/g, '/').replace(/\/0(\d)/g, '/$1');
+  if (merge) {
+    const w0 = 7.1;
+    logo(s, 1.5, LM, .42);
+    s.addText('場勘評估報告', { ...T0, x: LM, y: .98, w: 5, h: .26, fontSize: 11, bold: true, color: ACCENT, charSpacing: 4 });
+    s.addText(S.site.name || '(案名)', { ...T0, x: LM, y: 1.24, w: w0, h: .6, fontSize: 28, bold: true, color: NAVY, valign: 'middle', fit: 'shrink' });
+    const metaRuns = [];
+    [['客戶', S.site.client], ['地址', S.site.address], ['場勘日期', date]].filter(r => r[1]).forEach((r, i) => { if (i) metaRuns.push({ text: '　　', options: { fontSize: 12 } }); metaRuns.push({ text: r[0] + '  ', options: { color: MUTED, fontSize: 10 } }); metaRuns.push({ text: r[1], options: { color: INK, fontSize: 12 } }); });
+    if (metaRuns.length) s.addText(metaRuns, { ...T0, x: LM, y: 1.88, w: w0, h: .3, valign: 'middle', fit: 'shrink' });
+    s.addShape(pptx.ShapeType.line, { x: LM, y: 2.28, w: w0, h: 0, line: { color: HAIR, width: .75 } });
+  } else {
   logo(s, 2.2, LM + .1, .6);
   s.addText('場勘評估報告', { ...T0, x: LM + .1, y: 2.35, w: 6, h: .3, fontSize: 14, bold: true, color: ACCENT, charSpacing: 6 });
   const nameLines = Math.max(1, Math.ceil(textW(S.site.name || '(案名)') * (36 / LABEL_PT) / 6.6));
   const nameH = nameLines * .62 + .1, ruleY = 2.75 + nameH + .3;
   s.addText(S.site.name || '(案名)', { ...T0, x: LM + .1, y: 2.75, w: 6.8, h: nameH, fontSize: 36, bold: true, color: NAVY, valign: 'top' });
   s.addShape(pptx.ShapeType.line, { x: LM + .1, y: ruleY, w: 6.6, h: 0, line: { color: HAIR, width: .75 } });
-  const date = (S.site.date || '').replace(/-/g, '/').replace(/\/0(\d)/g, '/$1');
   [['客戶', S.site.client], ['地址', S.site.address], ['場勘日期', date]].filter(r => r[1]).forEach((r, i) => {
     s.addText(r[0], { ...T0, x: LM + .1, y: ruleY + .25 + i * .55, w: 1.3, h: .35, fontSize: 12, color: MUTED, valign: 'middle' });
     s.addText(r[1], { ...T0, x: LM + 1.5, y: ruleY + .25 + i * .55, w: 5.6, h: .35, fontSize: 16, color: INK, valign: 'middle' });
   });
+
+  }
 
   // ===== 表格共用 =====
   const estH = (sz, withB) => .5 + T.rows.reduce((a, r) => { const ln = Math.max(1, r.door.length, r.sw.length, withB ? r.bookLines.length : 1); return a + Math.max(.38, ln * sz * 1.3 / 72 + .14); }, 0) + .5;
@@ -548,10 +660,37 @@ async function buildPptx(S, A) {
   const note = (sl, txt, y) => sl.addText(txt, { ...T0, x: LM, y, w: CW, h: .28, fontSize: 11, color: MUTED });
   const anyPwr = S.points.some(p => p.kind === 'door' && p.pwr !== 'none');
 
-  // ===== 2 設備清單 =====
+  // ===== 設備清單 + 明細(首頁合併,同人工報告)=====
+  if (merge) {
+    const cv = s, keepSz = sz; sz = cs;
+    const w0 = 7.1, lab = (t, y) => cv.addText(t, { ...T0, x: LM, y, w: 4, h: .28, fontSize: 12, bold: true, color: ACCENT, charSpacing: 2, valign: 'middle' });
+    const y0 = 2.4, eqY = y0 + .3;
+    lab('設備清單', y0);
+    cv.addTable(tableRows(false), { fontFace: FONT, margin: [.02, .1, .02, .1], rowH: mRow, x: LM, y: eqY, w: w0, colW: [1.7, 1.1, 1.1, 1.1, 1.1, 1.0] });
+    const y1 = eqY + eqR * mRow + .14;
+    lab('設備明細', y1);
+    const bcell = (t, o) => ({ text: String(t), options: { valign: 'middle', fontSize: cs, color: INK, border: bd(true), ...o } });
+    const rows = [[head('項次'), head('項目', 'left'), head('用量'), head('備註', 'left')]];
+    BOMR.forEach((r, k) => rows.push([bcell(k + 1, { align: 'center', color: MUTED }), bcell(r[0], { align: 'left', bold: true, color: NAVY }), bcell(r[1], { align: 'center', bold: true, color: r[1] > 0 ? ACCENT : GHOST }), bcell(r[2] || '', { align: 'left', fontSize: cs - 1.5, color: MUTED })]));
+    cv.addTable(rows, { fontFace: FONT, margin: [.02, .1, .02, .1], rowH: mRow, x: LM, y: y1 + .3, w: w0, colW: [.6, 3.6, .9, 2.0] });
+    cv.addText(NOTE1, { ...T0, x: LM, y: Math.min(7.0, y1 + .3 + bR * mRow + .06), w: w0, h: .2, fontSize: 9, color: MUTED });
+    sz = keepSz;
+  } else {
   s = pptx.addSlide(); header(s, '場勘摘要', '設備清單'); rule(s, 1.5); footer(s); daysChip(s);
   s.addTable(tableRows(false), { ...tblOpts, x: LM, y: 1.8, w: CW, colW: [2.4, 2.1, 2.0, 1.9, 1.9, 1.83] });
   note(s, NOTE1, 6.8);
+
+  {
+    const bom = computeBom(S), rh = bom.length > 12 ? .36 : .42;
+    s = pptx.addSlide(); header(s, '場勘摘要', '設備明細表'); rule(s, 1.5); footer(s);
+    const bcell = (t, o) => ({ text: String(t), options: { valign: 'middle', fontSize: 13, color: INK, border: bd(true), ...o } });
+    const rows = [[head('項次'), head('項目', 'left'), head('用量'), head('備註', 'left')]];
+    bom.forEach((r, k) => rows.push([bcell(k + 1, { align: 'center', color: MUTED }), bcell(r[0], { align: 'left', bold: true, color: NAVY }), bcell(r[1], { align: 'center', bold: true, color: r[1] > 0 ? ACCENT : GHOST, fontSize: 14 }), bcell(r[2] || '', { align: 'left', fontSize: 11, color: MUTED })]));
+    s.addTable(rows, { fontFace: FONT, margin: [.03, .12, .03, .12], rowH: rh, x: LM, y: 1.8, w: CW, colW: [1.0, 6.2, 1.6, 3.33] });
+    s.addText('數量依各點位資料自動加總。', { ...T0, x: LM, y: 6.9, w: CW, h: .28, fontSize: 11, color: MUTED });
+  }
+
+  }
 
   // ===== 3 設備控制描述 =====
   s = pptx.addSlide(); header(s, '控制說明', '設備控制描述・場租預約'); rule(s, 1.5); footer(s);
@@ -656,6 +795,14 @@ async function buildPptx(S, A) {
       if (LP.extra.alert) ex(LP.extra.alert, 'FFF3C4', 'E0B100', INK, false);
     });
     if (hasAssess(p)) panel(sl, p);
+    {
+      const chips = pointChips(p);
+      if (chips.length) {
+        const strip0 = pointIcons(p).length > 0 || !!p.note, cy = 1.9 + (strip0 ? 4.2 : 5.0) - .5 + .1;
+        let cx = LM;
+        chips.forEach(t => { const cw = textW(t) * (12 / LABEL_PT) + .4; sl.addText(t, { x: cx, y: cy, w: cw, h: .38, fontFace: FONT, fontSize: 12, color: RED, align: 'center', valign: 'middle', margin: 0, shape: pptx.ShapeType.rect, fill: { color: 'FFFFFF' }, line: { color: RED, width: 1 } }); cx += cw + .15; });
+      }
+    }
     // 所需設備列
     let ix = LM;
     const icons = pointIcons(p);
@@ -715,7 +862,9 @@ function openDb() {
 }
 async function kvGet(k) { try { const db = await openDb(); return await new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); } catch (e) { return null; } }
 async function kvSet(k, v) { try { const db = await openDb(); await new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); return true; } catch (e) { return false; } }
+let onTouch = null;
 function touch() {
+  if (onTouch) onTouch();
   S.isSample = S.isSample && !S._edited;
   saveState = '儲存中…'; paintSave();
   clearTimeout(saveTimer);
@@ -740,6 +889,7 @@ async function listMetas() {
 }
 function normalize(P) {
   if (P.site.bookingText === undefined) P.site.bookingText = '綁智慧活動中心平台預約';
+  if (P.site.bookAll === undefined) P.site.bookAll = true;
   if (!P.site.crew) P.site.crew = 2;
   if (P.site.daysOverride === undefined) P.site.daysOverride = null;
   P.points.forEach(p => {
@@ -749,6 +899,9 @@ function normalize(P) {
     if (!p.mats) p.mats = [];
     if (p.days === undefined) p.days = 0;
     if (p.link === undefined) p.link = '';
+    if (p.kind === 'door') { if (p.lockSt === undefined) p.lockSt = p.locks > 0 ? 'add' : ''; if (p.irSt === undefined) p.irSt = p.ir > 0 ? 'add' : ''; }
+    if (p.box === undefined) p.box = '';
+    if (p.units === undefined) p.units = 0;
   });
   return P;
 }
@@ -951,6 +1104,7 @@ function photoBlock(p, pi, rerenderBlocks) {
 function setView(v, id) { view = v; editingId = id || null; render(); window.scrollTo(0, 0); }
 
 function render() {
+  onTouch = null;
   const app = $('#app');
   const nav = [['list', '案場庫'], ['site', '案場'], ['points', `點位 ${S.points.length}`], ['export', '匯出']];
   document.querySelectorAll('.tab').forEach(t => { t.classList.toggle('on', t.dataset.v === (view === 'edit' ? 'points' : view)); const n = nav.find(x => x[0] === t.dataset.v); if (n) t.querySelector('b').textContent = n[1]; });
@@ -1011,6 +1165,47 @@ function listView() {
     st, inp);
 }
 
+function boxChips() { const used = [...new Set(S.points.map(x => (x.box || '').trim()).filter(Boolean))]; return [...new Set([...used, ...BOXES])].slice(0, 9); }
+function clientPick(s) {
+  const cur = s.client || '', known = CLIENTS.find(c => c.n === cur);
+  const other = h('input', { type: 'text', value: known ? '' : cur, placeholder: '輸入客戶名稱', style: 'margin-top:8px;' + (known || !cur ? 'display:none' : ''), oninput: e => { s.client = e.target.value; S._edited = true; touch(); } });
+  const sel = h('select', { onchange: e => { const v = e.target.value; if (v === '__other') { other.style.display = ''; s.client = other.value; other.focus(); } else { other.style.display = 'none'; s.client = v; } S._edited = true; touch(); } },
+    h('option', { value: '' }, '請選擇客戶'),
+    ['台固', '凱擘'].map(g => h('optgroup', { label: g }, CLIENTS.filter(c => c.g === g).map(c => h('option', { value: c.n }, `(${g})${c.n}`)))),
+    h('option', { value: '__other' }, '其他(自行輸入)'));
+  sel.value = known ? cur : (cur ? '__other' : '');
+  return h('div', null, sel, other);
+}
+function chipRow(items, pick, cls) { return h('div', { class: 'chips', style: 'grid-column:1/-1' }, items.map(t => h('button', { type: 'button', class: 'chip sm' + (cls ? ' ' + cls : ''), onclick: () => pick(t) }, t))); }
+function triField(label, p, stKey, nKey, after) {
+  const root = h('div', { class: 'fld', style: 'grid-column:1/-1' });
+  const paint = () => {
+    const st = p[stKey] || '';
+    const seg = h('div', { class: 'seg', role: 'group', 'aria-label': label }, [['add', '加購'], ['have', '現場已有'], ['', '還沒確認']].map(([k, t]) => h('button', { type: 'button', class: `segb ${k || 'ask'}${st === k ? ' on' : ''}`, 'aria-pressed': String(st === k), onclick: () => { p[stKey] = k; if (k === 'add' && !(p[nKey] > 0)) p[nKey] = 1; S._edited = true; touch(); paint(); after && after(); } }, t)));
+    const val = h('span', { class: 'val' }, String(p[nKey] || 0));
+    const stp = st === 'add' ? h('div', { class: 'stepper', style: 'margin-top:8px' }, h('span', { class: 'hint' }, '數量'),
+      h('button', { type: 'button', class: 'iconbtn', 'aria-label': '減少', onclick: () => { p[nKey] = Math.max(1, (p[nKey] || 1) - 1); val.textContent = String(p[nKey]); S._edited = true; touch(); after && after(); } }, '−'), val,
+      h('button', { type: 'button', class: 'iconbtn', 'aria-label': '增加', onclick: () => { p[nKey] = (p[nKey] || 0) + 1; val.textContent = String(p[nKey]); S._edited = true; touch(); after && after(); } }, '＋')) : null;
+    root.replaceChildren(...[h('span', { class: 'fl' }, label), seg, stp].filter(Boolean));
+  };
+  paint(); return root;
+}
+function wpField(p, refit) {
+  const root = h('div', { class: 'fld', style: 'grid-column:1/-1' });
+  const get = () => (p.mats || []).find(m => m.n === '戶外防水殼');
+  const paint = () => {
+    const m = get(), was0 = hasAssess(p);
+    const seg = h('div', { class: 'seg', style: 'grid-template-columns:repeat(2,1fr)', role: 'group' }, [[false, '不需要'], [true, '需要']].map(([k, t]) => h('button', { type: 'button', class: `segb ${k ? 'add' : 'have'}${!!m === k ? ' on' : ''}`, onclick: () => { const w = hasAssess(p); if (k && !get()) p.mats.push({ n: '戶外防水殼', q: 1 }); if (!k) p.mats = p.mats.filter(x => x.n !== '戶外防水殼'); S._edited = true; touch(); paint(); if (w !== hasAssess(p)) refit(); } }, t)));
+    const val = h('span', { class: 'val' }, String(m ? m.q : 0));
+    const stp = m ? h('div', { class: 'stepper', style: 'margin-top:8px' }, h('span', { class: 'hint' }, '數量'),
+      h('button', { type: 'button', class: 'iconbtn', 'aria-label': '減少', onclick: () => { m.q = Math.max(1, m.q - 1); val.textContent = String(m.q); S._edited = true; touch(); } }, '−'), val,
+      h('button', { type: 'button', class: 'iconbtn', 'aria-label': '增加', onclick: () => { m.q += 1; val.textContent = String(m.q); S._edited = true; touch(); } }, '＋')) : null;
+    root.replaceChildren(...[h('span', { class: 'fl' }, '戶外防水殼(安裝在戶外才需要,數量現場決定)'), seg, stp].filter(Boolean));
+  };
+  paint(); return root;
+}
+const FLOORS = ['B1', '1F', '2F', '3F', '4F', '5F', '6F', '頂樓'], PLACES = ['大門', '後門', '側門', '冷氣', '燈具', '舞台', '管理室'], BOXES = ['管理室內', '電氣室', '機房', '中控室', '配電室', '樓梯間'], TARGETS = ['燈具', '插座', '冷氣', '風扇', '飲水機'];
+
 function siteView() {
   const s = S.site;
   const prev = h('div', { class: 'cover' });
@@ -1021,13 +1216,15 @@ function siteView() {
     sampleBanner(),
     h('h2', null, '案場資料'),
     h('div', { class: 'grid' },
-      field('客戶', textIn(s, 'client', '例:客戶公司名稱', () => $('#sub').textContent = s.name || '')),
+      field('客戶', clientPick(s)),
       field('場館 / 案名', textIn(s, 'name', '例:○○市民活動中心', () => $('#sub').textContent = s.name || '尚未命名案場')),
       field('地址', textIn(s, 'address', '例:新北市○○區○○路○號')),
       field('場勘日期', h('input', { type: 'date', value: s.date, oninput: e => { s.date = e.target.value; S._edited = true; touch(); } })),
       field('預約連動系統指令(第一行)', textIn(s, 'bookingText', '例:綁智慧活動中心平台預約', null), '顯示在「場租預約」欄。點位勾選「場租預約連動」才會出現。'),
-      field('預約連動說明(第二行)', textIn(s, 'bookingLine', '例:連動1F大門', null))),
+      field('預約連動說明(第二行)', textIn(s, 'bookingLine', '例:連動1F大門', null)),
+      field('預估安裝天數(現場決定)', h('input', { type: 'number', inputmode: 'decimal', step: 0.5, min: 0, value: s.daysOverride ?? '', placeholder: '例:2', onchange: e => { const v = e.target.value; s.daysOverride = v === '' ? null : Number(v); S._edited = true; touch(); } }), '會寫在報告的設備明細「安裝天數」。')),
     chkIn('點位標題的 QR 掃碼機寫成「QR 掃碼機X1」', s, 'qrX'),
+    chkIn('所有設備列都標示預約連動指令(人工報告慣例)', s, 'bookAll'),
     h('h3', null, '外觀照(封面右側)'),
     prev,
     h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn solid', onclick: () => inp.click() }, s.cover ? '更換照片' : '拍照 / 選擇照片'), inp,
@@ -1046,7 +1243,8 @@ function pointsView() {
       h('div', { class: 'pmain' },
         h('div', { class: 'ptitle' }, p.loc || '(未命名位置)', h('span', { class: 'badge' }, KIND_NAME[p.kind])),
         h('div', { class: 'psum' }, pointSummary(p)),
-        h('div', { class: 'pmeta' + (p.photos.length ? '' : ' warn') }, p.photos.length ? `${p.photos.length} 張照片 · ${marks} 個標記` : '尚未加入照片')),
+        h('div', { class: 'pmeta' }, p.photos.length ? `${p.photos.length} 張照片 · ${marks} 個標記` : '尚未加入照片'),
+        (() => { const pe = pendingItems(p); return pe.length ? h('div', { class: 'pmeta warn' }, `待確認 ${pe.length} 項:${pe.slice(0, 2).join('、')}${pe.length > 2 ? '…' : ''}`) : h('div', { class: 'pmeta ok' }, '已完成'); })()),
       thumbs,
       h('div', { class: 'ctl' },
         h('button', { type: 'button', class: 'iconbtn', 'aria-label': '上移', disabled: i === 0, onclick: e => { e.stopPropagation(); [S.points[i - 1], S.points[i]] = [S.points[i], S.points[i - 1]]; S._edited = true; touch(); render(); } }, '↑'),
@@ -1076,34 +1274,45 @@ function editView() {
   const paintBlocks = () => { blocks.replaceChildren(...p.photos.map((_, i) => photoBlock(p, i, paintBlocks))); paintAdd(); };
   const addHost = h('div');
   const fileIn = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async e => {
-    const files = [...e.target.files].slice(0, 3 - p.photos.length);
+    const files = [...e.target.files].slice(0, 5 - p.photos.length);
     for (const f of files) { const x = await readPhoto(f); x.marks = []; p.photos.push(x); }
     e.target.value = ''; S._edited = true; touch(); paintBlocks();
   } });
-  const paintAdd = () => addHost.replaceChildren(p.photos.length < 3
-    ? h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn solid', onclick: () => fileIn.click() }, p.photos.length ? '＋ 再加一張照片' : '拍照 / 選擇照片'), h('span', { class: 'hint' }, `一頁最多 3 張(目前 ${p.photos.length})`))
-    : h('p', { class: 'hint' }, '一頁最多 3 張照片。'));
+  const paintAdd = () => addHost.replaceChildren(p.photos.length < 5
+    ? h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn solid', onclick: () => fileIn.click() }, p.photos.length ? '＋ 再加一張照片' : '拍照 / 選擇照片'), h('span', { class: 'hint' }, `最多 5 張(目前 ${p.photos.length});報告建議 3 張內,多拍的之後再刪`))
+    : h('p', { class: 'hint' }, '一個點位最多 5 張照片。'));
+  const pendBox = h('div', { class: 'pendbox' });
+  const paintPend = () => { const pe = pendingItems(p); pendBox.className = 'pendbox' + (pe.length ? '' : ' done'); pendBox.replaceChildren(...[pe.length ? h('strong', null, `還有 ${pe.length} 項待確認`) : h('strong', null, '此點位已完成'), pe.length ? h('ul', null, pe.map(x => h('li', null, x))) : null].filter(Boolean)); };
+  onTouch = paintPend; paintPend();
   const refit = () => { paintTitle(); document.querySelectorAll('.pblock').forEach(b => b.repaint && b.repaint()); };
   const f = h('div', { class: 'grid' });
-  f.append(field('位置', textIn(p, 'loc', '例:1F大門', paintTitle)),
+  const locIn = textIn(p, 'loc', '例:1F大門', paintTitle);
+  const setLoc = v => { p.loc = v; locIn.value = v; S._edited = true; touch(); paintTitle(); };
+  f.append(field('位置', locIn),
+    chipRow(FLOORS, t => setLoc(t + (p.loc || '').replace(/^(B\d+|\d+F|頂樓)/, ''))),
+    chipRow(PLACES, t => { if (!(p.loc || '').includes(t)) setLoc((p.loc || '') + t); }),
     field('清單表格列', textIn(p, 'row', '留空 = 同位置', null), '電表、開關想併入某道門那一列時填那一列的名稱。'));
   if (p.kind === 'door') f.append(
-    chkIn('雲端門禁系統(含 QR 掃碼機)', p, 'qr', refit),
+    chkIn('雲端門禁系統(含 QR 掃碼機;照片有標 QR 也會自動算)', p, 'qr', refit),
     field('通行模式', selIn(p, 'mode', [['both', '雙向'], ['只出不進', '只出不進'], ['定時進出', '定時進出']], paintTitle)),
-    field('陽極鎖 + 外掛盒 數量', numIn(p, 'locks', paintTitle)),
-    field('紅外線感應開關 數量', numIn(p, 'ir', refit)),
-    field('加裝門片 數量', numIn(p, 'panels')),
+    triField('陽極鎖 + 外掛盒(對應要控制的門片數)', p, 'lockSt', 'locks', paintTitle),
+    triField('開門開關(紅外線感應開關)', p, 'irSt', 'ir', refit),
+    wpField(p, refit),
+    field('加裝門片 數量(選填)', numIn(p, 'panels'), '原人工報告的欄位,意義確認中;不會加進設備統計。'),
     field('電源開關控制器供斷電', selIn(p, 'pwr', [['none', '不加裝'], ['陽極鎖', '陽極鎖'], ['自動門', '自動門']], refit)),
     field('門弓器 數量', numIn(p, 'closer', paintTitle)));
   if (p.kind === 'meter') f.append(
     chkIn('預估(尚未測試,清單加括號)', p, 'est'),
     field('電表規格', selIn(p, 'phase', [['2P', '2P'], ['3P', '3P']], refit)),
     field('數量', numIn(p, 'count', paintTitle)),
-    field('控制對象', textIn(p, 'target', '例:燈具', paintTitle)));
+    (() => { const t = textIn(p, 'target', '例:燈具', paintTitle); return h('div', { style: 'display:contents' }, field('控制對象', t), chipRow(TARGETS, v => { p.target = v; t.value = v; S._edited = true; touch(); paintTitle(); })); })(),
+    (() => { const t = textIn(p, 'box', '例:面舞台左邊中控室', refit); return h('div', { style: 'display:contents' }, field('電箱位置', t, '會以紅框文字標在照片下方。'), chipRow(boxChips(), v => { p.box = v; t.value = v; S._edited = true; touch(); refit(); })); })());
   if (p.kind === 'switch') f.append(
     chkIn('預估(尚未測試,清單加括號)', p, 'est'),
-    field('控制對象', textIn(p, 'target', '例:冷氣', paintTitle)),
-    field('數量', numIn(p, 'count', paintTitle)));
+    (() => { const t = textIn(p, 'target', '例:冷氣', paintTitle); return h('div', { style: 'display:contents' }, field('控制對象', t), chipRow(TARGETS, v => { p.target = v; t.value = v; S._edited = true; touch(); paintTitle(); })); })(),
+    field('數量(控制器顆數)', numIn(p, 'count', paintTitle)),
+    (() => { const t = textIn(p, 'box', '例:進門左手邊電氣室', refit); return h('div', { style: 'display:contents' }, field('電箱位置', t, '會以紅框文字標在照片下方。'), chipRow(boxChips(), v => { p.box = v; t.value = v; S._edited = true; touch(); refit(); })); })(),
+    field('被控制設備台數(例:冷氣共幾台)', numIn(p, 'units', refit), '會標「冷氣共N台」,請一併拍冷氣本體。'));
   f.append(chkIn('場租預約連動', p, 'booking'), field('備註(顯示在頁面標題下方,紅字)', textIn(p, 'note', '例:目前為拉門,後續需改為雙開門')));
   const al = h('textarea', { rows: 2, placeholder: '例:未斷電測試\n預估2P X 4顆', oninput: e => { p.alert = e.target.value; S._edited = true; touch(); refit(); } }, p.alert || '');
   f.append(field('黃底提醒框(顯示在第一張照片左上角,可留空)', al));
@@ -1111,7 +1320,7 @@ function editView() {
   return h('section', { class: 'view' },
     h('div', { class: 'back' }, h('button', { type: 'button', class: 'btn ghost', onclick: () => setView('points') }, '← 點位列表'), h('span', { class: 'badge' }, KIND_NAME[p.kind]), h('span', { class: 'sp' }),
       twoTap('刪除此點位', () => { S.points = S.points.filter(x => x !== p); S._edited = true; touch(); setView('points'); })),
-    h('div', { class: 'cap' }, '投影片標題預覽'), titleBox,
+    h('div', { class: 'cap' }, '投影片標題預覽'), titleBox, pendBox,
     f,
     h('h3', null, '照片與標記'), blocks, addHost, fileIn,
     h('h3', null, '施工評估'), assessSection(p, refit));
@@ -1181,11 +1390,11 @@ function exportView() {
   if (!S.site.name) warns.push('案場尚未填寫名稱');
   if (!S.site.cover) warns.push('封面沒有外觀照');
   S.points.forEach((p, i) => {
-    if (!p.loc) warns.push(`第 ${i + 1} 點位沒有填位置`);
-    if (!p.photos.length) warns.push(`第 ${i + 1} 點位(${p.loc || '未命名'})沒有照片`);
-    else if (!p.photos.some(x => x.marks.length)) warns.push(`第 ${i + 1} 點位(${p.loc || '未命名'})照片還沒有標記`);
-    if (!p.verdict) warns.push(`第 ${i + 1} 點位(${p.loc || '未命名'})還沒判定可否施工`);
+    const nm = `第 ${i + 1} 點位(${p.loc || '未命名'})`;
+    pendingItems(p).forEach(x => warns.push(`${nm}:${x}`));
+    if (p.photos.length > 3) warns.push(`${nm}有 ${p.photos.length} 張照片,版面會縮小,確認是否要刪減`);
   });
+  if (!(computeBuild(S).days > 0)) warns.push('預估安裝天數還沒填(現場決定,案場頁或這頁都可以填)');
   if (!S.points.length) warns.push('尚未新增任何點位');
   const B = computeBuild(S);
   const build = h('div', { class: 'buildbox' },
@@ -1226,11 +1435,14 @@ function exportView() {
     h('h3', null, '施工概況'), build,
     h('h3', null, '設備清單(自動加總)'),
     h('div', { class: 'tblwrap' }, tbl),
+    h('p', { class: 'hint' }, '這張表會出現在報告首頁,以及「設備控制描述・場租預約」頁。列名取自各點位的「清單表格列」(留空 = 位置);場租預約欄依「案場」頁的設定。'),
+    h('h3', null, '設備明細(自動加總)'),
+    h('div', { class: 'tblwrap' }, h('table', { class: 'tbl', style: 'min-width:0' }, h('thead', null, h('tr', null, ['項次', '項目', '用量'].map(t => h('th', null, t)))), h('tbody', null, computeBom(S).map((r, k) => h('tr', null, h('th', { scope: 'row' }, String(k + 1)), h('td', { style: 'text-align:left' }, r[0]), h('td', null, String(r[1]))))))),
     warns.length ? h('div', { class: 'warns' }, h('strong', null, '匯出前可以再確認'), h('ul', null, warns.map(w => h('li', null, w)))) : h('p', { class: 'ok' }, '資料完整,可以匯出。'),
     btn, status);
 }
 
-function blankProject() { return { isSample: false, site: { client: '', name: '', address: '', date: new Date().toISOString().slice(0, 10), bookingText: '綁智慧活動中心平台預約', bookingLine: '', crew: 2, daysOverride: null, cover: null }, points: [] }; }
+function blankProject() { return { isSample: false, site: { client: '', name: '', address: '', date: new Date().toISOString().slice(0, 10), bookingText: '綁智慧活動中心平台預約', bookAll: true, bookingLine: '', crew: 2, daysOverride: null, cover: null }, points: [] }; }
 
 async function boot() {
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) { }
