@@ -298,6 +298,7 @@ const MAT_PRESETS = ['戶外防水殼', '線材', '線槽/保護管', '固定五
 const HOW_SRC = ['需由冷氣電源截斷', '由現有開關', '由現有電源', '由分電盤'];
 const HOW_COND = ['需另拉電源線', '需開孔/鑽孔', '需高空作業', '需協調停電'];
 const NOTE1 = '附註 1　雲端門禁系統一套包含:QR 掃碼機 + 陽極鎖 + 陽極鎖外掛盒 + 紅外線非接觸式感應開關';
+const note1 = S => NOTE1 + (S.points.some(p => p.kind === 'door' && p.auto && counted(p)) ? ';自動門僅含 QR 掃碼機' : '');
 const NOTE2 = '附註 2　電源開關控制器:用於控制陽極鎖電源供斷電,以設定門禁啟用時段';
 const MODE_LABEL = { both: '雙向', '只出不進': '只出不進', '定時進出': '定時進出' };
 const PRESETS = {
@@ -320,13 +321,13 @@ const workLine = w => `${w.target || ''}${w.how || ''}`.trim();
 const cleanWorks = p => (p.works || []).filter(w => workLine(w));
 const CLIENTS = [{ g: '台固', n: '永佳樂有線電視' }, { g: '台固', n: '紅樹林有線電視' }, { g: '凱擘', n: '全聯有線電視' }, { g: '凱擘', n: '新唐城有線電視' }];
 const fullAddr = st => { const a = (st.address || '').trim(), c = st.city || '', d = st.dist || ''; return (a.startsWith(c) ? '' : c) + (d && !a.includes(d) ? d : '') + a; };
-const lockQty = p => (p.lockSt === 'add' ? (p.locks || 0) : 0);
-const irQty = p => (p.irSt === 'add' ? (p.ir || 0) : 0);
+const lockQty = p => (!p.auto && p.lockSt === 'add' ? (p.locks || 0) : 0);
+const irQty = p => (!p.auto && p.irSt === 'add' ? (p.ir || 0) : 0);
 function pendingItems(p) {
   const r = [];
   if (!(p.loc || '').trim()) r.push('位置沒填');
   if (!(p.photos || []).length) r.push('沒有照片');
-  if (p.kind === 'door' && isQr(p)) {
+  if (p.kind === 'door' && isQr(p) && !p.auto) {
     if (!p.lockSt) r.push('陽極鎖/外掛盒:要加購還是現場已有?');
     else if (p.lockSt === 'add' && !(p.locks > 0)) r.push('陽極鎖/外掛盒:加購幾個?');
     if (!p.irSt) r.push('開門開關:要加購還是現場已有?');
@@ -335,8 +336,8 @@ function pendingItems(p) {
   const hasMark = re => (p.photos || []).some(ph => (ph.marks || []).some(m => re.test(m.text || '')));
   if (p.kind === 'door') {
     if (p.qr && !hasMark(/QR/i)) r.push('QR 掃碼機:照片上還沒標註安裝位置');
-    if (p.lockSt === 'add' && !hasMark(/陽極鎖|外掛盒/)) r.push('陽極鎖+外掛盒:照片上還沒標註安裝位置');
-    if (p.irSt === 'add' && !hasMark(/紅外線|感應開關|開門/)) r.push('開門開關:照片上還沒標註安裝位置');
+    if (!p.auto && p.lockSt === 'add' && !hasMark(/陽極鎖|外掛盒/)) r.push('陽極鎖+外掛盒:照片上還沒標註安裝位置');
+    if (!p.auto && p.irSt === 'add' && !hasMark(/紅外線|感應開關|開門/)) r.push('開門開關:照片上還沒標註安裝位置');
     const ds = (p.photos || []).map(x => x.dir);
     if ((p.photos || []).length) {
       if (!ds.includes('out') && !ds.includes('in')) r.push('門的照片請標示拍攝方向(門外往內/門內往外),門的兩側都要拍');
@@ -385,13 +386,14 @@ function pointHeader(p, i, qrx) {
   const n = String(i + 1).padStart(2, '0'), loc = p.loc || '(未命名位置)';
   const kind = KIND_NAME[p.kind];
   if (p.kind === 'door') {
-    const lead = isQr(p) ? [{ n: '雲端門禁系統', q: 1 }] : (p.mode !== 'both' ? [{ n: p.mode }] : []);
+    const lead = isQr(p) ? [{ n: p.auto ? '雲端門禁系統(自動門,僅 QR)' : '雲端門禁系統', q: 1 }] : (p.mode !== 'both' ? [{ n: p.mode }] : []);
     const items = [];
     if (isQr(p)) items.push({ n: 'QR 掃碼機', q: qrx ? 1 : 0 });
-    if (p.lockSt === 'add' && p.locks > 0) { items.push({ n: '陽極鎖', q: p.locks }); items.push({ n: '陽極鎖外掛盒', q: p.locks }); }
-    else if (p.lockSt === 'have') items.push({ n: '陽極鎖(現場已有)' });
-    if (p.irSt === 'add' && p.ir > 0) items.push({ n: '紅外線非接觸式感應開關', q: p.ir });
-    else if (p.irSt === 'have') items.push({ n: '開門開關(現場已有)' });
+    const lk = p.auto ? '' : p.lockSt, ik = p.auto ? '' : p.irSt;
+    if (lk === 'add' && p.locks > 0) { items.push({ n: '陽極鎖', q: p.locks }); items.push({ n: '陽極鎖外掛盒', q: p.locks }); }
+    else if (lk === 'have') items.push({ n: '陽極鎖(現場已有)' });
+    if (ik === 'add' && p.ir > 0) items.push({ n: '紅外線非接觸式感應開關', q: p.ir });
+    else if (ik === 'have') items.push({ n: '開門開關(現場已有)' });
     if (p.closer > 0) items.push({ n: '門弓器', q: p.closer });
     return { eyebrow: `點位 ${n}　${kind}`, title: `${loc}　門禁`, tparts: [loc, '門禁'], groups: [lead, items].filter(g => g.length) };
   }
@@ -469,7 +471,7 @@ function computeTable(S) {
     }
     if (p.kind === 'door') {
       if (!counted(p)) r.door.push({ t: `(${VERDICT[p.verdict].t})` });
-      else if (isQr(p)) { r.door.push({ t: '1' }); tot.door += 1; if (p.panels > 0) r.door.push({ t: `加裝門片 ×${p.panels}`, red: true }); }
+      else if (isQr(p)) { r.door.push({ t: '1' }); if (p.auto) r.door.push({ t: '自動門・僅 QR' }); tot.door += 1; if (p.panels > 0) r.door.push({ t: `加裝門片 ×${p.panels}`, red: true }); }
       else r.door.push({ t: `${p.mode === 'both' ? '' : p.mode + ' '}門片 ×${p.panels || p.locks || 1}`, red: true });
       if (counted(p) && p.pwr !== 'none') { addAgg(r.sw, '門禁', 1, false); tot.sw += 1; }
       if (counted(p) && p.closer > 0) { r.closer += p.closer; tot.closer += p.closer; }
@@ -483,6 +485,8 @@ function computeTable(S) {
       });
     }
   });
+  const fk = n => { const f = floorOf(n); if (!f) return null; if (f === '頂樓') return 99; return f[0] === 'B' ? -parseInt(f.slice(1)) : parseInt(f); };
+  if (rows.length > 1 && rows.every(r => fk(r.name) !== null)) rows.sort((a, b) => fk(a.name) - fk(b.name));
   return { rows, tot };
 }
 
@@ -734,17 +738,18 @@ async function buildPptx(S, A) {
     : { text: dash ? '–' : '', options: { color: GHOST } };
   const bodyCell = (arr, dash) => { const t = lines(arr, dash); return { text: Array.isArray(t) ? t : [t], options: { align: 'center', valign: 'middle', fontSize: sz, border: bd(true) } }; };
   const nameCell = (t) => ({ text: t, options: { bold: true, color: NAVY, align: 'left', valign: 'middle', fontSize: sz, border: bd(true) } });
+  const showCl0 = T.tot.closer > 0;
   const tableRows = (withBooking) => {
-    const hdr = [head('位置', 'left'), head('雲端門禁系統'), head('電源開關控制器'), head('2P 電源控制電表'), head('3P 電源控制電表'), head('門弓器')];
+    const hdr = [head('位置', 'left'), head('雲端門禁系統'), head('電源開關控制器'), head('2P 電源控制電表'), head('3P 電源控制電表')]; if (showCl0) hdr.push(head('門弓器'));
     if (withBooking) hdr.push(head('場租預約'));
     const rows = [hdr];
     T.rows.forEach(r => {
-      const c = [nameCell(r.name), bodyCell(r.door), bodyCell(r.sw), bodyCell(r.p2, true), bodyCell(r.p3, true), bodyCell(r.closer ? [{ t: String(r.closer) }] : [], true)];
+      const c = [nameCell(r.name), bodyCell(r.door), bodyCell(r.sw), bodyCell(r.p2, true), bodyCell(r.p3, true)]; if (showCl0) c.push(bodyCell(r.closer ? [{ t: String(r.closer) }] : [], true));
       if (withBooking) c.push(bodyCell(r.bookLines.map(t => ({ t })), false));
       rows.push(c);
     });
     const tt = (v) => ({ text: String(v), options: { bold: true, color: NAVY, fill: { color: TINT }, align: 'center', valign: 'middle', fontSize: sz + 1, border: [{ type: 'solid', pt: 1.5, color: ACCENT }, { type: 'none' }, { type: 'none' }, { type: 'none' }] } });
-    const last = [{ text: '合計', options: { bold: true, color: NAVY, fill: { color: TINT }, align: 'left', valign: 'middle', fontSize: sz, border: [{ type: 'solid', pt: 1.5, color: ACCENT }, { type: 'none' }, { type: 'none' }, { type: 'none' }] } }, tt(T.tot.door), tt(T.tot.sw), tt(T.tot.p2), tt(T.tot.p3), tt(T.tot.closer)];
+    const last = [{ text: '合計', options: { bold: true, color: NAVY, fill: { color: TINT }, align: 'left', valign: 'middle', fontSize: sz, border: [{ type: 'solid', pt: 1.5, color: ACCENT }, { type: 'none' }, { type: 'none' }, { type: 'none' }] } }, tt(T.tot.door), tt(T.tot.sw), tt(T.tot.p2), tt(T.tot.p3)]; if (showCl0) last.push(tt(T.tot.closer));
     if (withBooking) last.push(tt(''));
     rows.push(last);
     return rows;
@@ -759,19 +764,19 @@ async function buildPptx(S, A) {
     const w0 = 7.1, lab = (t, y) => cv.addText(t, { ...T0, x: LM, y, w: 4, h: .28, fontSize: 12, bold: true, color: ACCENT, charSpacing: 2, valign: 'middle' });
     const y0 = 2.4, eqY = y0 + .3;
     lab('設備清單', y0);
-    cv.addTable(tableRows(false), { fontFace: FONT, margin: [.02, .1, .02, .1], rowH: mRow, x: LM, y: eqY, w: w0, colW: [1.7, 1.1, 1.1, 1.1, 1.1, 1.0] });
+    cv.addTable(tableRows(false), { fontFace: FONT, margin: [.02, .1, .02, .1], rowH: mRow, x: LM, y: eqY, w: w0, colW: showCl0 ? [1.7, 1.1, 1.1, 1.1, 1.1, 1.0] : [2.0, 1.25, 1.3, 1.3, 1.25] });
     const y1 = eqY + eqR * mRow + .14;
     lab('設備明細', y1);
     const bcell = (t, o) => ({ text: String(t), options: { valign: 'middle', fontSize: cs, color: INK, border: bd(true), ...o } });
     const rows = [[head('項次'), head('項目', 'left'), head('用量'), head('備註', 'left')]];
     BOMR.forEach((r, k) => rows.push([bcell(k + 1, { align: 'center', color: MUTED }), bcell(r[0], { align: 'left', bold: true, color: NAVY }), bcell(r[1], { align: 'center', bold: true, color: r[1] > 0 ? ACCENT : GHOST }), bcell(r[2] || '', { align: 'left', fontSize: cs - 1.5, color: MUTED })]));
     cv.addTable(rows, { fontFace: FONT, margin: [.02, .1, .02, .1], rowH: mRow, x: LM, y: y1 + .3, w: w0, colW: [.6, 3.6, .9, 2.0] });
-    cv.addText(NOTE1, { ...T0, x: LM, y: Math.min(7.0, y1 + .3 + bR * mRow + .06), w: w0, h: .2, fontSize: 9, color: MUTED });
+    cv.addText(note1(S), { ...T0, x: LM, y: Math.min(7.0, y1 + .3 + bR * mRow + .06), w: w0, h: .2, fontSize: 9, color: MUTED });
     sz = keepSz;
   } else {
   s = pptx.addSlide(); header(s, '場勘摘要', '設備清單'); rule(s, 1.5); footer(s);
-  s.addTable(tableRows(false), { ...tblOpts, x: LM, y: 1.8, w: CW, colW: [2.4, 2.1, 2.0, 1.9, 1.9, 1.83] });
-  note(s, NOTE1, 6.8);
+  s.addTable(tableRows(false), { ...tblOpts, x: LM, y: 1.8, w: CW, colW: showCl0 ? [2.4, 2.1, 2.0, 1.9, 1.9, 1.83] : [2.8, 2.3, 2.2, 2.4, 2.43] });
+  note(s, note1(S), 6.8);
 
   {
     const bom = computeBom(S), rh = bom.length > 12 ? .36 : .42;
@@ -787,8 +792,8 @@ async function buildPptx(S, A) {
 
   // ===== 3 設備控制描述 =====
   s = pptx.addSlide(); header(s, '控制說明', '設備控制描述・場租預約'); rule(s, 1.5); footer(s);
-  s.addTable(tableRows(true), { ...tblOpts, x: LM, y: 1.8, w: CW, colW: [2.0, 1.8, 1.7, 1.35, 1.35, 1.0, 2.93] });
-  note(s, NOTE1, anyPwr ? 6.66 : 6.9);
+  s.addTable(tableRows(true), { ...tblOpts, x: LM, y: 1.8, w: CW, colW: showCl0 ? [2.0, 1.8, 1.7, 1.35, 1.35, 1.0, 2.93] : [2.4, 2.0, 1.9, 1.6, 1.6, 2.63] });
+  note(s, note1(S), anyPwr ? 6.66 : 6.9);
   if (anyPwr) note(s, NOTE2, 6.9);
 
   // ===== 施工評估總表 / 耗材清單 =====
@@ -1760,6 +1765,7 @@ function editView() {
     field('清單表格列', textIn(p, 'row', '留空 = 同位置', null), '電表、開關想併入某道門那一列時填那一列的名稱。'));
   if (p.kind === 'door') f.append(
     chkIn('雲端門禁系統(含 QR 掃碼機;照片有標 QR 也會自動算)', p, 'qr', refit),
+    chkIn('自動門(只裝 QR 掃碼機,不加陽極鎖、外掛盒、開門開關)', p, 'auto', refit),
     field('通行模式', selIn(p, 'mode', [['both', '雙向'], ['只出不進', '只出不進'], ['定時進出', '定時進出']], paintTitle)),
     triField('陽極鎖 + 外掛盒(對應要控制的門片數)', p, 'lockSt', 'locks', paintTitle),
     triField('開門開關(紅外線感應開關)', p, 'irSt', 'ir', refit),
@@ -1839,10 +1845,11 @@ function exportView() {
   const hasBooking = true;
   const tbl = h('table', { class: 'tbl' });
   const cell = (lines, dash) => h('td', null, lines.length ? lines.map((l, i) => h('div', { class: l.red ? 'r' : '' }, l.t)) : (dash ? '-' : ''));
-  tbl.append(h('thead', null, h('tr', null, ['', '雲端門禁系統', '電源開關控制器', '2P 電表', '3P 電表', '門弓器', '場租預約'].map(t => h('th', null, t)))));
+  const showCl = T.tot.closer > 0;
+  tbl.append(h('thead', null, h('tr', null, ['', '雲端門禁系統', '電源開關控制器', '2P 電表', '3P 電表', ...(showCl ? ['門弓器'] : []), '場租預約'].map(t => h('th', null, t)))));
   const tb = h('tbody');
-  T.rows.forEach(r => tb.append(h('tr', null, h('th', { scope: 'row' }, r.name), cell(r.door), cell(r.sw), cell(r.p2, 1), cell(r.p3, 1), cell(r.closer ? [{ t: String(r.closer) }] : [], 1), cell(r.bookLines.map(t => ({ t }))))));
-  tb.append(h('tr', { class: 'tot' }, h('th', { scope: 'row' }, 'TOTAL'), h('td', null, T.tot.door), h('td', null, T.tot.sw), h('td', null, T.tot.p2), h('td', null, T.tot.p3), h('td', null, T.tot.closer), h('td')));
+  T.rows.forEach(r => tb.append(h('tr', null, h('th', { scope: 'row' }, r.name), cell(r.door), cell(r.sw), cell(r.p2, 1), cell(r.p3, 1), ...(showCl ? [cell(r.closer ? [{ t: String(r.closer) }] : [], 1)] : []), cell(r.bookLines.map(t => ({ t }))))));
+  tb.append(h('tr', { class: 'tot' }, h('th', { scope: 'row' }, 'TOTAL'), h('td', null, T.tot.door), h('td', null, T.tot.sw), h('td', null, T.tot.p2), h('td', null, T.tot.p3), ...(showCl ? [h('td', null, T.tot.closer)] : []), h('td')));
   tbl.append(tb);
   const warns = [];
   if (!S.site.name) warns.push('案場尚未填寫名稱');
