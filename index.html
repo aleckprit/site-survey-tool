@@ -322,8 +322,8 @@ const workLine = w => `${w.target || ''}${w.how || ''}`.trim();
 const cleanWorks = p => (p.works || []).filter(w => workLine(w));
 const CLIENTS = [{ g: '台固', n: '永佳樂有線電視' }, { g: '台固', n: '紅樹林有線電視' }, { g: '凱擘', n: '全聯有線電視' }, { g: '凱擘', n: '新唐城有線電視' }];
 const fullAddr = st => { const a = (st.address || '').trim(), c = st.city || '', d = st.dist || ''; return (a.startsWith(c) ? '' : c) + (d && !a.includes(d) ? d : '') + a; };
-const lockQty = p => (!p.auto && p.lockSt === 'add' ? (p.locks || 0) : 0);
-const irQty = p => (!p.auto && p.irSt === 'add' ? (p.ir || 0) : 0);
+const lockQty = p => (!p.auto && (p.lockSt === 'add' || p.lockSt === 'have') ? (p.locks || 0) : 0);
+const irQty = p => (!p.auto && (p.irSt === 'add' || p.irSt === 'have') ? (p.ir || 0) : 0);
 function pendingItems(p) {
   const r = [];
   if (typeof S !== 'undefined' && S && S.site && spaceList(S).length && !spaceOf(S, p)) r.push('還沒歸屬到任何空間(到點位頁選「所屬空間」)');
@@ -332,9 +332,9 @@ function pendingItems(p) {
   if (!(p.photos || []).length) r.push('沒有照片');
   if (p.kind === 'door' && isQr(p) && !p.auto) {
     if (!p.lockSt) r.push('陽極鎖/外掛盒:要加購還是現場已有?');
-    else if (p.lockSt === 'add' && !(p.locks > 0)) r.push('陽極鎖/外掛盒:加購幾個?');
+    else if (!(p.locks > 0)) r.push('陽極鎖/外掛盒:數量是幾個?(現場已有也要填)');
     if (!p.irSt) r.push('開門開關:要加購還是現場已有?');
-    else if (p.irSt === 'add' && !(p.ir > 0)) r.push('開門開關:加購幾個?');
+    else if (!(p.ir > 0)) r.push('開門開關:數量是幾個?(現場已有也要填)');
   }
   const hasMark = re => (p.photos || []).some(ph => (ph.marks || []).some(m => re.test(m.text || '')));
   if (p.kind === 'door') {
@@ -357,7 +357,7 @@ function pendingItems(p) {
   }
   if (p.wp === 'ask') r.push('戶外防水殼:還沒確認要不要');
   if (p.kind === 'door' && (p.mats || []).some(m => m.n === '戶外防水殼')) r.push('防水殼是給 2P/3P 斷路器用的,門禁點位不需要,請移到電表或開關點位');
-  if (p.kind === 'door' && !p.auto && p.lockSt === 'add' && p.panels > 0 && p.locks !== p.panels) r.push(`陽極鎖 ${p.locks} 個與門片 ${p.panels} 個不同,請確認`);
+  if (p.kind === 'door' && !p.auto && (p.lockSt === 'add' || p.lockSt === 'have') && p.panels > 0 && p.locks !== p.panels) r.push(`陽極鎖 ${p.locks} 個與門片 ${p.panels} 個不同,請確認`);
   if (p.kind === 'meter' && /\d/.test(p.note || '') && p.count < Math.max(...(p.note.match(/\d+/g) || [0]).map(Number))) r.push(`備註提到數字(${p.note}),但數量是 ${p.count},請確認`);
   return r;
 }
@@ -401,10 +401,9 @@ function pointHeader(p, i, qrx) {
     const items = [];
     if (isQr(p)) items.push({ n: 'QR 掃碼機', q: qrx ? 1 : 0 });
     const lk = p.auto ? '' : p.lockSt, ik = p.auto ? '' : p.irSt;
-    if (lk === 'add' && p.locks > 0) { items.push({ n: '陽極鎖', q: p.locks }); items.push({ n: '陽極鎖外掛盒', q: p.locks }); }
-    else if (lk === 'have') items.push({ n: '陽極鎖(現場已有)' });
-    if (ik === 'add' && p.ir > 0) items.push({ n: '紅外線非接觸式感應開關', q: p.ir });
-    else if (ik === 'have') items.push({ n: '開門開關(現場已有)' });
+    const hv = s => s === 'have' ? '(現場已有)' : '';
+    if ((lk === 'add' || lk === 'have') && p.locks > 0) { items.push({ n: '陽極鎖' + hv(lk), q: p.locks }); items.push({ n: '陽極鎖外掛盒' + hv(lk), q: p.locks }); }
+    if ((ik === 'add' || ik === 'have') && p.ir > 0) items.push({ n: '紅外線非接觸式感應開關' + hv(ik), q: p.ir });
     if (p.closer > 0) items.push({ n: '門弓器', q: p.closer });
     return { eyebrow: `點位 ${n}　${kind}`, title: `${loc}　門禁`, tparts: [loc, '門禁'], groups: [lead, items].filter(g => g.length) };
   }
@@ -513,10 +512,10 @@ function computeTable(S) {
 // ---- 設備明細表(依點位資料自動加總) ----
 function computeBom(S) {
   const t = computeTable(S).tot, B = computeBuild(S);
-  let qr = 0, locks = 0, ir = 0, closer = 0;
-  S.points.forEach(p => { if (p.kind !== 'door' || !counted(p)) return; if (isQr(p)) { qr++; locks += lockQty(p); ir += irQty(p); } closer += p.closer || 0; });
+  let qr = 0, locks = 0, ir = 0, closer = 0, lockHave = 0, irHave = 0;
+  S.points.forEach(p => { if (p.kind !== 'door' || !counted(p)) return; if (isQr(p)) { qr++; locks += lockQty(p); ir += irQty(p); if (p.lockSt === 'have') lockHave += lockQty(p); if (p.irSt === 'have') irHave += irQty(p); } closer += p.closer || 0; });
   const mat = n => B.mats.find(m => m.n === n);
-  const rows = [['QR 掃碼機', qr, ''], ['陽極鎖', locks, ''], ['陽極鎖外掛盒', locks, ''], ['開門按鈕(紅外線非接觸式感應開關)', ir, ''],
+  const rows = [['QR 掃碼機', qr, ''], ['陽極鎖', locks, lockHave ? `含現場已有 ${lockHave} 個(施工時可能置換)` : ''], ['陽極鎖外掛盒', locks, lockHave ? `含現場已有 ${lockHave} 組` : ''], ['開門按鈕(紅外線非接觸式感應開關)', ir, irHave ? `含現場已有 ${irHave} 個` : ''],
     ['門弓器', closer, ''], ['雲端智慧電表 2P 電表', t.p2, ''], ['雲端智慧電表 3P 電表', t.p3, ''],
     ['戶外防水殼', mat('戶外防水殼') ? mat('戶外防水殼').q : 0, mat('戶外防水殼') ? [...new Set(mat('戶外防水殼').pts)].join('、') : ''],
     ['電源開關控制器', t.sw, '']];
@@ -962,7 +961,7 @@ function baAct(p, i, qrx) {
   if (p.kind === 'meter') return `增設雲端智慧電表 ×${p.count}(${p.phase} 電源控制電表)`;
   const H = pointHeader(p, i, qrx);
   const items = H.groups.flat().filter(x => x.q && !/待決定/.test(x.n)).map(x => `${x.n} ×${x.q}`);
-  return items.length ? '增設' + items.join('、') : '';
+  return items.length ? '安裝' + items.join('、') : '';
 }
 const baDate = d => (d || '').replace(/-/g, '/').replace(/\/0(\d)/g, '/$1');
 function baChunks(arr) { const r = []; for (let k = 0; k < arr.length; k += 3) r.push(arr.slice(k, k + 3)); return r.length ? r : [[]]; }
@@ -1197,7 +1196,7 @@ function normalize(P) {
     if (p.link === undefined) p.link = '';
     if (p.wp === undefined) p.wp = p.mats.some(m => m.n === '戶外防水殼') ? 'need' : 'no';
     if (p.kind === 'switch' && !p.us) p.us = [{ id: nid(), ctl: 'sw', q: p.count || 1, cnt: p.units || 1, how: '' }];
-    if (p.kind === 'door') { if (p.lockSt === undefined) p.lockSt = p.locks > 0 ? 'add' : ''; if (p.irSt === undefined) p.irSt = p.ir > 0 ? 'add' : ''; }
+    if (p.kind === 'door') { if (p.lockSt === 'have' && !(p.locks > 0)) p.locks = p.panels || 1; if (p.irSt === 'have' && !(p.ir > 0)) p.ir = 1; if (p.lockSt === undefined) p.lockSt = p.locks > 0 ? 'add' : ''; if (p.irSt === undefined) p.irSt = p.ir > 0 ? 'add' : ''; }
     if (p.box === undefined) p.box = '';
     if (p.units === undefined) p.units = 0;
   });
@@ -1596,13 +1595,13 @@ function clientPick(s) {
   return h('div', null, sel, other);
 }
 function chipRow(items, pick, cls) { return h('div', { class: 'chips', style: 'grid-column:1/-1' }, items.map(t => h('button', { type: 'button', class: 'chip sm' + (cls ? ' ' + cls : ''), onclick: () => pick(t) }, t))); }
-function triField(label, p, stKey, nKey, after) {
+function triField(label, p, stKey, nKey, after, dflt) {
   const root = h('div', { class: 'fld', style: 'grid-column:1/-1' });
   const paint = () => {
     const st = p[stKey] || '';
-    const seg = h('div', { class: 'seg', role: 'group', 'aria-label': label }, [['add', '加購'], ['have', '現場已有'], ['', '還沒確認']].map(([k, t]) => h('button', { type: 'button', class: `segb ${k || 'ask'}${st === k ? ' on' : ''}`, 'aria-pressed': String(st === k), onclick: () => { p[stKey] = k; if (k === 'add' && !(p[nKey] > 0)) p[nKey] = 1; S._edited = true; touch(); paint(); after && after(); } }, t)));
+    const seg = h('div', { class: 'seg', role: 'group', 'aria-label': label }, [['add', '加購'], ['have', '現場已有'], ['', '還沒確認']].map(([k, t]) => h('button', { type: 'button', class: `segb ${k || 'ask'}${st === k ? ' on' : ''}`, 'aria-pressed': String(st === k), onclick: () => { p[stKey] = k; if ((k === 'add' || k === 'have') && !(p[nKey] > 0)) p[nKey] = dflt ? dflt() : 1; S._edited = true; touch(); paint(); after && after(); } }, t)));
     const val = h('span', { class: 'val' }, String(p[nKey] || 0));
-    const stp = st === 'add' ? h('div', { class: 'stepper', style: 'margin-top:8px' }, h('span', { class: 'hint' }, '數量'),
+    const stp = (st === 'add' || st === 'have') ? h('div', { class: 'stepper', style: 'margin-top:8px' }, h('span', { class: 'hint' }, '數量(現場已有也要計入)'),
       h('button', { type: 'button', class: 'iconbtn', 'aria-label': '減少', onclick: () => { p[nKey] = Math.max(1, (p[nKey] || 1) - 1); val.textContent = String(p[nKey]); S._edited = true; touch(); after && after(); } }, '−'), val,
       h('button', { type: 'button', class: 'iconbtn', 'aria-label': '增加', onclick: () => { p[nKey] = (p[nKey] || 0) + 1; val.textContent = String(p[nKey]); S._edited = true; touch(); after && after(); } }, '＋')) : null;
     root.replaceChildren(...[h('span', { class: 'fl' }, label), seg, stp].filter(Boolean));
@@ -1826,9 +1825,9 @@ function editView() {
     chkIn('雲端門禁系統(含 QR 掃碼機;照片有標 QR 也會自動算)', p, 'qr', refit),
     chkIn('自動門(只裝 QR 掃碼機,不加陽極鎖、外掛盒、開門開關)', p, 'auto', refit),
     field('通行模式', selIn(p, 'mode', [['both', '雙向'], ['只出不進', '只出不進'], ['定時進出', '定時進出']], paintTitle)),
-    triField('陽極鎖 + 外掛盒(對應要控制的門片數)', p, 'lockSt', 'locks', paintTitle),
-    triField('開門開關(紅外線感應開關)', p, 'irSt', 'ir', refit),
-    field('門片數(現場可開啟的門扇數)', h('input', { type: 'text', inputmode: 'numeric', value: p.panels || 0, onchange: e => { const prev = p.panels || 0; p.panels = num(e.target.value); if (p.lockSt === 'add' && (!(p.locks > 0) || p.locks === prev) && p.panels > 0) p.locks = p.panels; S._edited = true; touch(); render(); } }), '記錄用。一般一個門片配一個陽極鎖;陽極鎖選「加購」時,數量會自動跟門片數一致,可再改。'),
+    triField('陽極鎖 + 外掛盒(數量通常等於門片數;現場已有也要填,施工當天客戶可能一併置換)', p, 'lockSt', 'locks', paintTitle, () => p.panels || 1),
+    triField('開門開關(紅外線感應開關;現場已有也要填)', p, 'irSt', 'ir', refit),
+    field('門片數(現場可開啟的門扇數)', h('input', { type: 'text', inputmode: 'numeric', value: p.panels || 0, onchange: e => { const prev = p.panels || 0; p.panels = num(e.target.value); if ((p.lockSt === 'add' || p.lockSt === 'have') && (!(p.locks > 0) || p.locks === prev) && p.panels > 0) p.locks = p.panels; S._edited = true; touch(); render(); } }), '記錄用。一般一個門片配一個陽極鎖;填門片數後,陽極鎖數量會自動跟著一致,可再改;兩者不同時會提醒。'),
     field('電源開關控制器供斷電', selIn(p, 'pwr', [['none', '不加裝'], ['陽極鎖', '陽極鎖'], ['自動門', '自動門']], refit)),
     field('門弓器 數量', numIn(p, 'closer', paintTitle)));
   if (p.kind === 'meter') f.append(
