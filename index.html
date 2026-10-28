@@ -300,6 +300,7 @@ const HOW_COND = ['需另拉電源線', '需開孔/鑽孔', '需高空作業', '
 const NOTE1 = '附註 1　雲端門禁系統一套包含:QR 掃碼機 + 陽極鎖 + 陽極鎖外掛盒 + 紅外線非接觸式感應開關';
 const note1 = S => NOTE1 + (S.points.some(p => p.kind === 'door' && p.auto && counted(p)) ? ';自動門僅含 QR 掃碼機' : '');
 const NOTE2 = '附註 2　電源開關控制器:用於控制陽極鎖電源供斷電,以設定門禁啟用時段';
+const modeTags = p => [p.mode === '只出不進' ? '只出不進' : '', p.timed || p.mode === '定時進出' ? '定時進出' : ''].filter(Boolean);
 const MODE_LABEL = { both: '雙向', '只出不進': '只出不進', '定時進出': '定時進出' };
 const PRESETS = {
   door: [
@@ -354,7 +355,7 @@ function pendingItems(p) {
     const N = unitCnt(p), n = (p.photos || []).reduce((a, x) => a + (x.marks || []).length, 0);
     if (N > 1 && n < N) r.push(`${p.target || '設備'}共 ${N} 台,照片上只標了 ${n} 處,請標出每台位置(可用 1號、2號 編號)`);
   }
-  if (p.kind === 'door' && !p.auto && p.pwr === 'none' && (/定時|時段|排程/.test(p.note || '') || p.mode === '定時進出')) r.push('備註/模式有「定時」,但沒有選「電源開關控制器供斷電」,是否漏了控制器?');
+  if (p.kind === 'door' && !p.auto && p.pwr === 'none' && (/定時|時段|排程/.test(p.note || '') || p.timed || p.mode === '定時進出')) r.push('備註/模式有「定時」,但沒有選「電源開關控制器供斷電」,是否漏了控制器?');
   if (p.kind === 'meter' || (p.kind === 'switch' && (swQ(p, 'p2') + swQ(p, 'p3')) > 0)) {
     const want = p.kind === 'meter' ? (p.count || 0) : swQ(p, 'p2') + swQ(p, 'p3');
     let got = 0, any = false;
@@ -387,7 +388,7 @@ function computeBuild(S) {
 function newPoint(kind) {
   const b = { id: nid(), kind, loc: '', row: '', booking: false, note: '', photos: [], verdict: 'go', works: [], days: 0, mats: [], link: '', box: '', units: 0, wp: 'no' };
   if (kind === 'switch') Object.assign(b, { us: [{ id: nid(), ctl: '', q: 1, cnt: 1, how: '' }], wp: 'no' });
-  if (kind === 'door') Object.assign(b, { qr: true, locks: 0, lockSt: '', ir: 0, irSt: '', panels: 0, mode: 'both', pwr: 'none', closer: 0 });
+  if (kind === 'door') Object.assign(b, { qr: true, locks: 0, lockSt: '', ir: 0, irSt: '', panels: 0, mode: 'both', timed: false, pwr: 'none', closer: 0 });
   if (kind === 'meter') Object.assign(b, { phase: '3P', count: 1, target: '燈具', est: false });
   if (kind === 'switch') Object.assign(b, { target: '冷氣', count: 1, est: false });
   return b;
@@ -404,7 +405,7 @@ function pointHeader(p, i, qrx) {
   const n = String(i + 1).padStart(2, '0'), loc = p.loc || '(未命名位置)';
   const kind = KIND_NAME[p.kind];
   if (p.kind === 'door') {
-    const lead = [{ n: p.auto ? '雲端門禁系統(自動門,僅 QR)' : '雲端門禁系統', q: 1, post: p.mode !== 'both' && p.mode ? '>> ' + p.mode : '' }];
+    const lead = [{ n: p.auto ? '雲端門禁系統(自動門,僅 QR)' : '雲端門禁系統', q: 1, post: modeTags(p).length ? '>> ' + modeTags(p).join('、') : '' }];
     const items = [];
     if (isQr(p)) items.push({ n: 'QR 掃碼機', q: 0 });
     const lk = p.auto ? '' : p.lockSt, ik = p.auto ? '' : p.irSt;
@@ -451,7 +452,7 @@ function pointIconQty(p, k) {
 function pointSummary(p) {
   if (p.kind === 'door') {
     const a = [];
-    a.push(isQr(p) ? '雲端門禁' : (p.mode === 'both' ? '門片' : p.mode));
+    a.push(isQr(p) ? '雲端門禁' : (modeTags(p).length ? modeTags(p).join('、') : '門片'));
     if (lockQty(p)) a.push('鎖X' + lockQty(p)); else if (p.lockSt === 'have') a.push('鎖:已有');
     if (irQty(p)) a.push('感應X' + irQty(p)); else if (p.irSt === 'have') a.push('感應:已有');
     if (p.pwr !== 'none') a.push('斷電控制');
@@ -501,7 +502,7 @@ function computeTable(S) {
   autoSpaces(S);
   const rows = [], idx = {};
   const tot = { door: 0, sw: 0, p2: 0, p3: 0, closer: 0 };
-  const newRow = (name, sp) => ({ name, door: [], doorX: [], nDoor: 0, nOut: 0, nAuto: 0, sw: [], p2: [], p3: [], closer: 0, booking: false, bookLines: [], sp: sp || null, doors: [] });
+  const newRow = (name, sp) => ({ name, door: [], doorX: [], nDoor: 0, nOut: 0, nTimed: 0, nAuto: 0, sw: [], p2: [], p3: [], closer: 0, booking: false, bookLines: [], sp: sp || null, doors: [] });
   S.points.forEach(p => {
     const sp0 = spaceOf(S, p), name = (sp0 ? sp0.name : (floorOf(p.loc) || p.row || p.loc || '(未命名)')).trim();
     if (!(name in idx)) { idx[name] = rows.length; rows.push(newRow(name, sp0)); }
@@ -509,7 +510,7 @@ function computeTable(S) {
     if (p.kind === 'door' && counted(p) && (p.loc || '').trim()) r.doors.push(p.loc.trim());
     if (p.kind === 'door') {
       if (!counted(p)) r.doorX.push({ t: `(${VERDICT[p.verdict].t})` });
-      else { r.nDoor++; tot.door += 1; if (p.mode === '只出不進') r.nOut++; if (p.auto) r.nAuto++; }
+      else { r.nDoor++; tot.door += 1; if (p.mode === '只出不進') r.nOut++; if (p.timed) r.nTimed++; if (p.auto) r.nAuto++; }
       if (counted(p) && p.pwr !== 'none') { addAgg(r.sw, '門禁', 1, false); tot.sw += 1; }
       if (counted(p) && p.closer > 0) { r.closer += p.closer; tot.closer += p.closer; }
     } else if (p.kind === 'meter') {
@@ -526,7 +527,7 @@ function computeTable(S) {
   rows.forEach(r => {
     // 雲端門禁系統格:每扇門 1 套,只顯示數字;「只出不進」「自動門」是小標籤
     r.door = [];
-    if (r.nDoor) { r.door.push({ t: String(r.nDoor) }); const tg = []; if (r.nOut) tg.push(`只出不進 ×${r.nOut}`); if (r.nAuto) tg.push(`自動門 ×${r.nAuto}`); if (tg.length) r.door.push({ t: tg.join('、'), small: true }); }
+    if (r.nDoor) { r.door.push({ t: String(r.nDoor) }); const tg = []; if (r.nOut) tg.push(`只出不進 ×${r.nOut}`); if (r.nTimed) tg.push(`定時進出 ×${r.nTimed}`); if (r.nAuto) tg.push(`自動門 ×${r.nAuto}`); if (tg.length) r.door.push({ t: tg.join('、'), small: true }); }
     r.door.push(...r.doorX);
     if (r.sp && r.sp.noBook) { r.bookLines = []; r.booking = false; return; }
     const cmd = ((r.sp && r.sp.bookCmd) || '').trim() || S.site.bookingText || '綁智慧活動中心平台預約';
@@ -1184,6 +1185,7 @@ function normalize(P) {
   // 舊版「清單表格列」若所有點位填同一個名稱(多樓層卻只有一個空間),那不是真的空間:拆掉,改依樓層自動分列
   if (P.site.spaces.length === 1 && P.points.length > 1 && !floorOf(P.site.spaces[0].name) && !P.site.spaces[0].bookCmd && !P.site.spaces[0].bookNote && P.points.every(p => p.row === P.site.spaces[0].name || !p.row) && new Set(P.points.map(p => floorOf(p.loc)).filter(Boolean)).size > 1) { P.points.forEach(p => { p.space = ''; p.row = ''; }); P.site.spaces = []; }
   else if (!P.site.spaces.length && P.points.length > 1 && new Set(P.points.map(p => p.row).filter(Boolean)).size === 1 && new Set(P.points.map(p => floorOf(p.loc)).filter(Boolean)).size > 1) P.points.forEach(p => { p.row = ''; });
+  P.points.forEach(p => { if (p.mode === '定時進出') { p.mode = 'both'; p.timed = true; } if (p.timed === undefined) p.timed = false; });
   P.points.forEach(p => { if (p.space === undefined) p.space = ''; if (p.row && !p.space) { let sp = P.site.spaces.find(x => x.name === p.row); if (!sp) { sp = { id: nid(), name: p.row }; P.site.spaces.push(sp); } p.space = sp.id; } });
   if (!P.site.shots) P.site.shots = [];
   if (P.site.installDate === undefined) P.site.installDate = '';
@@ -1891,7 +1893,8 @@ function editView() {
   if (p.kind === 'door') f.append(
     qrChk,
     chkIn('自動門(只裝 QR 掃碼機,不加陽極鎖、外掛盒、開門開關)', p, 'auto', refit),
-    field('通行模式(只出不進:不裝 QR 掃碼機)', selIn(p, 'mode', [['both', '雙向'], ['只出不進', '只出不進'], ['定時進出', '定時進出']], () => { if (p.mode === '只出不進') p.qr = false; qrChk.style.display = p.mode === '只出不進' ? 'none' : ''; paintTitle(); refit(); })),
+    chkIn('定時進出(部分時間常斷電/常開,部分時間上鎖;可和「只出不進」同時成立)', p, 'timed', () => { paintTitle(); refit(); }),
+    field('通行方向(只出不進:不裝 QR 掃碼機)', selIn(p, 'mode', [['both', '雙向'], ['只出不進', '只出不進']], () => { if (p.mode === '只出不進') p.qr = false; qrChk.style.display = p.mode === '只出不進' ? 'none' : ''; paintTitle(); refit(); })),
     triField('陽極鎖 + 外掛盒(數量通常等於門片數;現場已有也要填,施工當天客戶可能一併置換)', p, 'lockSt', 'locks', paintTitle, () => p.panels || 1),
     triField('開門開關(紅外線感應開關;現場已有也要填)', p, 'irSt', 'ir', refit),
     field('門片數(現場可開啟的門扇數)', h('input', { type: 'text', inputmode: 'numeric', value: p.panels || 0, onchange: e => { const prev = p.panels || 0; p.panels = num(e.target.value); if ((p.lockSt === 'add' || p.lockSt === 'have') && (!(p.locks > 0) || p.locks === prev) && p.panels > 0) p.locks = p.panels; S._edited = true; touch(); render(); } }), '記錄用。一般一個門片配一個陽極鎖;填門片數後,陽極鎖數量會自動跟著一致,可再改;兩者不同時會提醒。'),
