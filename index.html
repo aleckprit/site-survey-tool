@@ -330,7 +330,7 @@ function pendingItems(p) {
   else if (typeof S !== 'undefined' && S && S.site && !p.space && floorOf(p.loc) && spaceList(S).filter(x => floorOf(x.name) === floorOf(p.loc)).length > 1) r.push('這層樓有多個空間,請選「所屬空間」');
   if (!(p.loc || '').trim()) r.push('位置沒填');
   if (!(p.photos || []).length) r.push('沒有照片');
-  if (p.kind === 'door' && isQr(p) && !p.auto) {
+  if (p.kind === 'door' && (isQr(p) || p.mode === '只出不進') && !p.auto) {
     if (!p.lockSt) r.push('陽極鎖/外掛盒:要加購還是現場已有?');
     else if (!(p.locks > 0)) r.push('陽極鎖/外掛盒:數量是幾個?(現場已有也要填)');
     if (!p.irSt) r.push('開門開關:要加購還是現場已有?');
@@ -338,7 +338,7 @@ function pendingItems(p) {
   }
   const hasMark = re => (p.photos || []).some(ph => (ph.marks || []).some(m => re.test(m.text || '')));
   if (p.kind === 'door') {
-    if (p.qr && !hasMark(/QR/i)) r.push('QR 掃碼機:照片上還沒標註安裝位置');
+    if (isQr(p) && !hasMark(/QR/i)) r.push('QR 掃碼機:照片上還沒標註安裝位置');
     if (!p.auto && p.lockSt === 'add' && !hasMark(/陽極鎖|外掛盒/)) r.push('陽極鎖+外掛盒:照片上還沒標註安裝位置');
     if (!p.auto && p.irSt === 'add' && !hasMark(/紅外線|感應開關|開門/)) r.push('開門開關:照片上還沒標註安裝位置');
     const ds = (p.photos || []).map(x => x.dir);
@@ -361,7 +361,7 @@ function pendingItems(p) {
   if (p.kind === 'meter' && /\d/.test(p.note || '') && p.count < Math.max(...(p.note.match(/\d+/g) || [0]).map(Number))) r.push(`備註提到數字(${p.note}),但數量是 ${p.count},請確認`);
   return r;
 }
-function isQr(p) { return p.kind === 'door' && !!(p.qr || (p.photos || []).some(ph => (ph.marks || []).some(m => /QR/i.test(m.text || '')))); }
+function isQr(p) { return p.kind === 'door' && p.mode !== '只出不進' && !!(p.qr || (p.photos || []).some(ph => (ph.marks || []).some(m => /QR/i.test(m.text || '')))); }
 function hasAssess(p) { return !!((p.verdict && p.verdict !== 'go') || cleanWorks(p).length || (p.mats || []).length || (p.link || '').trim()); }
 function howChips(p) {
   const eq = p.kind === 'meter' ? [`增設${p.phase}電源控制電表`] : p.kind === 'switch' ? ['增設電源開關控制器'] : ['增設陽極鎖+外掛盒', '增設紅外線感應開關', '增設 QR 掃碼機', '增設電源開關控制器'];
@@ -518,7 +518,7 @@ function computeTable(S) {
 function computeBom(S) {
   const t = computeTable(S).tot, B = computeBuild(S);
   let qr = 0, locks = 0, ir = 0, closer = 0, lockHave = 0, irHave = 0;
-  S.points.forEach(p => { if (p.kind !== 'door' || !counted(p)) return; if (isQr(p)) { qr++; locks += lockQty(p); ir += irQty(p); if (p.lockSt === 'have') lockHave += lockQty(p); if (p.irSt === 'have') irHave += irQty(p); } closer += p.closer || 0; });
+  S.points.forEach(p => { if (p.kind !== 'door' || !counted(p)) return; if (isQr(p) || p.mode === '只出不進') { if (isQr(p)) qr++; locks += lockQty(p); ir += irQty(p); if (p.lockSt === 'have') lockHave += lockQty(p); if (p.irSt === 'have') irHave += irQty(p); } closer += p.closer || 0; });
   const mat = n => B.mats.find(m => m.n === n);
   const rows = [['QR 掃碼機', qr, ''], ['陽極鎖', locks, lockHave ? `含現場已有 ${lockHave} 個(施工時可能置換)` : ''], ['陽極鎖外掛盒', locks, lockHave ? `含現場已有 ${lockHave} 組` : ''], ['開門按鈕(紅外線非接觸式感應開關)', ir, irHave ? `含現場已有 ${irHave} 個` : ''],
     ['門弓器', closer, ''], ['雲端智慧電表 2P 電表', t.p2, ''], ['雲端智慧電表 3P 電表', t.p3, ''],
@@ -671,7 +671,8 @@ async function cropToAspect(ph, aspect) {
     if (sw / sh > aspect) { const nw = sh * aspect; sx = (sw - nw) / 2; sw = nw; }
     else { const nh = sw / aspect; sy = (sh - nh) * .3; sh = nh; }
     const c = document.createElement('canvas'); c.width = Math.round(sw); c.height = Math.round(sh);
-    c.getContext('2d').drawImage(im, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    const g2 = c.getContext('2d'); g2.fillStyle = '#fff'; g2.fillRect(0, 0, c.width, c.height);
+    g2.drawImage(im, sx, sy, sw, sh, 0, 0, c.width, c.height);
     return c.toDataURL('image/jpeg', .88);
   } catch (e) { return null; }
 }
@@ -1226,16 +1227,43 @@ function paintSave() { const e = $('#savestate'); if (e) e.textContent = saveSta
 
 // ---- 照片讀取:縮到長邊 1600px ----
 async function readPhoto(file) {
-  let bmp;
-  try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
-  catch (e) {
-    bmp = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = URL.createObjectURL(file); });
-  }
-  const w0 = bmp.width || bmp.naturalWidth, h0 = bmp.height || bmp.naturalHeight;
-  const s = Math.min(1, 1600 / Math.max(w0, h0)), w = Math.round(w0 * s), hh = Math.round(h0 * s);
-  const c = document.createElement('canvas'); c.width = w; c.height = hh;
-  c.getContext('2d').drawImage(bmp, 0, 0, w, hh);
-  return { src: c.toDataURL('image/jpeg', .8), w, h: hh };
+  const viaImg = () => new Promise((res, rej) => { const u = URL.createObjectURL(file), im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = u; });
+  // 檢查三段(上/中/下)是否都有真實影像:全黑、或下半被白底留空(大圖解碼不完整)都算失敗
+  const good = (g, w, hh) => {
+    try {
+      for (const [y0, y1] of [[0, .33], [.33, .66], [.66, 1]]) {
+        let ok = 0, n = 0;
+        for (let i = 0; i < 12; i++) for (let j = 0; j < 12; j++) {
+          const d = g.getImageData(Math.min(w - 1, Math.floor((i + .5) / 12 * w)), Math.min(hh - 1, Math.floor((y0 + (y1 - y0) * (j + .5) / 12) * hh)), 1, 1).data; n++;
+          if (d[0] + d[1] + d[2] > 24 && !(d[0] > 252 && d[1] > 252 && d[2] > 252)) ok++;
+        }
+        if (ok < n * .08) return false;
+      }
+    } catch (e) { return true; }
+    return true;
+  };
+  const draw = bmp => {
+    const w0 = bmp.width || bmp.naturalWidth, h0 = bmp.height || bmp.naturalHeight;
+    const s = Math.min(1, 1600 / Math.max(w0, h0)), w = Math.max(1, Math.round(w0 * s)), hh = Math.max(1, Math.round(h0 * s));
+    const c = document.createElement('canvas'); c.width = w; c.height = hh;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.fillStyle = '#fff'; g.fillRect(0, 0, w, hh);   // 透明 PNG/WebP 轉 JPEG 會變全黑,先鋪白底
+    const strip = Math.max(256, Math.round(512 / s));  // 分條繪製,避免超大圖一次畫不完整
+    for (let sy = 0; sy < h0; sy += strip) { const sh = Math.min(strip, h0 - sy); g.drawImage(bmp, 0, sy, w0, sh, 0, Math.round(sy * s), w, Math.max(1, Math.round(sh * s))); }
+    return { c, w, h: hh, ok: good(g, w, hh) };
+  };
+  const big = async () => {   // 超大原圖(如 5000 萬畫素):讓瀏覽器邊解碼邊縮小
+    const buf = new Uint8Array(await file.slice(0, 262144).arrayBuffer()); let W = 0, H = 0;
+    for (let i = 2; i + 9 < buf.length;) { if (buf[i] !== 0xFF) { i++; continue; } const m = buf[i + 1]; if (m >= 0xC0 && m <= 0xCF && ![0xC4, 0xC8, 0xCC].includes(m)) { H = buf[i + 5] << 8 | buf[i + 6]; W = buf[i + 7] << 8 | buf[i + 8]; break; } i += 2 + (buf[i + 2] << 8 | buf[i + 3]); }
+    if (!W || !H) throw new Error('no dims');
+    const k = 1600 / Math.max(W, H); if (k >= 1) throw new Error('small');
+    return createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: Math.round(W * k), resizeHeight: Math.round(H * k), resizeQuality: 'medium' });
+  };
+  const tries = [async () => draw(await big()), async () => draw(await createImageBitmap(file, { imageOrientation: 'from-image' })), async () => draw(await viaImg())];
+  let r = null, lastErr = null;
+  for (const t of tries) { try { const x = await t(); if (!r) r = x; if (x.ok) { r = x; break; } } catch (e) { lastErr = e; } }
+  if (!r) throw lastErr || new Error('讀不到照片');
+  return { src: r.c.toDataURL('image/jpeg', .8), w: r.w, h: r.h };
 }
 
 // ---- 共用小元件 ----
@@ -1641,14 +1669,17 @@ function unitsEditor(p, refit, paintTitle) {
     const ta = h('textarea', { rows: 2, placeholder: '施工方式,例:需由冷氣電源截斷', oninput: e => { u.how = e.target.value; S._edited = true; touch(); } }, u.how || '');
     return h('div', { class: 'work' },
       h('div', { class: 'row' }, h('strong', { style: 'flex:1' }, p.us.length > 1 ? `${i + 1} 號${p.target || '設備'}` : (p.target || '設備')), p.us.length > 1 ? twoTap('刪除', () => { p.us = p.us.filter(x => x !== u); changed(); paint(); }, 'btn ghost danger sm') : null),
-      h('span', { class: 'fl' }, '控制方式(必選)'), seg,
+      h('span', { class: 'fl' }, '控制方式(必選)'), i > 0 ? h('button', { type: 'button', class: 'btn ghost sm', style: 'margin-bottom:6px', onclick: () => { const l = p.us[i - 1]; u.ctl = l.ctl; u.q = l.q; u.how = l.how; changed(); paint(); } }, '與上一台相同') : null, seg,
       ['sw', 'p3', 'p2'].includes(u.ctl) ? step(u, 'q', 1, '要裝幾顆') : null,
       step(u, 'cnt', 1, `這一組控制幾台${p.target || '設備'}`),
       h('div', { class: 'chips' }, HOW_SRC.map(c => h('button', { type: 'button', class: 'chip sm', onclick: () => { u.how = (u.how || '') + c; ta.value = u.how; S._edited = true; touch(); } }, c))), ta);
   };
   const paint = () => {
     if (!p.us || !p.us.length) p.us = [{ id: nid(), ctl: '', q: 1, cnt: 1, how: '' }];
-    root.replaceChildren(h('span', { class: 'fl' }, `每一台${p.target || '設備'}怎麼控制(多台會自動編號 1號、2號…)`), ...p.us.map(card),
+    const nu = p.us.length, setN = n => { n = Math.max(1, Math.min(30, n)); while (p.us.length < n) { const l = p.us[p.us.length - 1] || {}; p.us.push({ id: nid(), ctl: '', q: l.q || 1, cnt: 1, how: '' }); } while (p.us.length > n) p.us.pop(); changed(); paint(); };
+    const nstep = h('div', { class: 'stepper', style: 'margin:6px 0 10px' }, h('span', { class: 'hint' }, `這個位置有幾台${p.target || '設備'}(每台可各選控制方式)`),
+      h('button', { type: 'button', class: 'iconbtn', 'aria-label': '減少', onclick: () => setN(nu - 1) }, '−'), h('span', { class: 'val' }, String(nu)), h('button', { type: 'button', class: 'iconbtn', 'aria-label': '增加', onclick: () => setN(nu + 1) }, '＋'));
+    root.replaceChildren(h('span', { class: 'fl' }, `每一台${p.target || '設備'}怎麼控制(多台會自動編號 1號、2號…,各台方式可不同)`), nstep, ...p.us.map(card),
       h('button', { type: 'button', class: 'btn', onclick: () => { p.us.push({ id: nid(), ctl: '', q: 1, cnt: 1, how: '' }); changed(); paint(); } }, `＋ 再加一台/一組`));
   };
   paint(); return root;
@@ -1832,10 +1863,11 @@ function editView() {
     chipRow(FLOORS, t => setLoc(t + (p.loc || '').replace(/^(B\d+|\d+F|頂樓)/, ''))),
     chipRow(PLACES, t => { if (!(p.loc || '').includes(t)) setLoc((p.loc || '') + t); }),
     spaceField(p));
+  const qrChk = chkIn('雲端門禁系統(含 QR 掃碼機;照片有標 QR 也會自動算)', p, 'qr', refit); if (p.mode === '只出不進') qrChk.style.display = 'none';
   if (p.kind === 'door') f.append(
-    chkIn('雲端門禁系統(含 QR 掃碼機;照片有標 QR 也會自動算)', p, 'qr', refit),
+    qrChk,
     chkIn('自動門(只裝 QR 掃碼機,不加陽極鎖、外掛盒、開門開關)', p, 'auto', refit),
-    field('通行模式', selIn(p, 'mode', [['both', '雙向'], ['只出不進', '只出不進'], ['定時進出', '定時進出']], paintTitle)),
+    field('通行模式(只出不進:不裝 QR 掃碼機)', selIn(p, 'mode', [['both', '雙向'], ['只出不進', '只出不進'], ['定時進出', '定時進出']], () => { if (p.mode === '只出不進') p.qr = false; qrChk.style.display = p.mode === '只出不進' ? 'none' : ''; paintTitle(); refit(); })),
     triField('陽極鎖 + 外掛盒(數量通常等於門片數;現場已有也要填,施工當天客戶可能一併置換)', p, 'lockSt', 'locks', paintTitle, () => p.panels || 1),
     triField('開門開關(紅外線感應開關;現場已有也要填)', p, 'irSt', 'ir', refit),
     field('門片數(現場可開啟的門扇數)', h('input', { type: 'text', inputmode: 'numeric', value: p.panels || 0, onchange: e => { const prev = p.panels || 0; p.panels = num(e.target.value); if ((p.lockSt === 'add' || p.lockSt === 'have') && (!(p.locks > 0) || p.locks === prev) && p.panels > 0) p.locks = p.panels; S._edited = true; touch(); render(); } }), '記錄用。一般一個門片配一個陽極鎖;填門片數後,陽極鎖數量會自動跟著一致,可再改;兩者不同時會提醒。'),
