@@ -1259,10 +1259,24 @@ async function readPhoto(file) {
     const k = 1600 / Math.max(W, H); if (k >= 1) throw new Error('small');
     return createImageBitmap(file, { imageOrientation: 'from-image', resizeWidth: Math.round(W * k), resizeHeight: Math.round(H * k), resizeQuality: 'medium' });
   };
-  const tries = [async () => draw(await big()), async () => draw(await createImageBitmap(file, { imageOrientation: 'from-image' })), async () => draw(await viaImg())];
-  let r = null, lastErr = null;
-  for (const t of tries) { try { const x = await t(); if (!r) r = x; if (x.ok) { r = x; break; } } catch (e) { lastErr = e; } }
+  // 逐次減半縮小(省記憶體):每次只做 2 倍縮小,最後才縮到 1600
+  const halve = async src => {
+    let cur = src, w = cur.width || cur.naturalWidth, hh = cur.height || cur.naturalHeight;
+    while (Math.max(w, hh) > 3200) { const nw = Math.ceil(w / 2), nh = Math.ceil(hh / 2), c = document.createElement('canvas'); c.width = nw; c.height = nh; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, nw, nh); g.drawImage(cur, 0, 0, nw, nh); cur = c; w = nw; hh = nh; }
+    return cur;
+  };
+  const tries = [
+    ['縮放解碼', async () => draw(await big())],
+    ['一般解碼', async () => draw(await createImageBitmap(file, { imageOrientation: 'from-image' }))],
+    ['img 元素', async () => { const im = await viaImg(); try { await im.decode(); } catch (e) { /* 略過 */ } return draw(im); }],
+    ['逐次減半', async () => draw(await halve(await viaImg()))],
+  ];
+  let r = null, lastErr = null; const log = [];
+  for (const [nm, t] of tries) { try { const x = await t(); log.push(nm + (x.ok ? '✓' : '✗')); if (x.ok) { r = x; break; } if (!r) r = x; } catch (e) { log.push(nm + '×'); lastErr = e; } }
+  const mb = (file.size / 1048576).toFixed(1);
+  window.__photoDiag = `原檔 ${mb}MB · ${log.join(' ')}`;
   if (!r) throw lastErr || new Error('讀不到照片');
+  if (!log.some(x => x.endsWith('✓'))) window.__photoDiag += ' ⚠ 4 種讀法都疑似不完整';
   return { src: r.c.toDataURL('image/jpeg', .8), w: r.w, h: r.h };
 }
 
@@ -1783,7 +1797,8 @@ function siteView() {
   const prev = h('div', { class: 'cover' });
   const paintCover = () => prev.replaceChildren(s.cover ? h('img', { src: s.cover.src, alt: '建築外觀' }) : h('div', { class: 'ph' }, '尚無外觀照'));
   paintCover();
-  const inp = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async e => { const f = e.target.files[0]; if (!f) return; s.cover = await readPhoto(f); S._edited = true; touch(); paintCover(); e.target.value = ''; } });
+  const coverMsg = h('p', { class: 'hint' }, '');
+  const inp = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async e => { const f = e.target.files[0]; if (!f) return; try { s.cover = await readPhoto(f); S._edited = true; touch(); paintCover(); coverMsg.textContent = '診斷:' + window.__photoDiag; } catch (err) { coverMsg.textContent = '這張照片讀取失敗:' + (err.message || err) + '。請換一張,或把這行文字傳給我。'; } e.target.value = ''; } });
   return h('section', { class: 'view' },
     sampleBanner(),
     h('h2', null, '案場資料'),
@@ -1797,6 +1812,7 @@ function siteView() {
     h('h3', null, '空間'), spacesEditor(),
     h('h3', null, '外觀照(封面右側)'),
     prev,
+    coverMsg,
     h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn solid', onclick: () => inp.click() }, s.cover ? '更換照片' : '拍照 / 選擇照片'), inp,
       s.cover ? h('button', { type: 'button', class: 'btn ghost', onclick: () => { s.cover = null; touch(); paintCover(); } }, '移除') : null),
     h('div', { class: 'next' }, h('button', { type: 'button', class: 'btn solid wide', onclick: () => setView('points') }, '下一步:點位 →')));
