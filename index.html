@@ -426,7 +426,7 @@ function pointHeader(p, i, qrx) {
   }
   if (p.kind === 'meter') {
     const t = p.target === '燈具' ? '燈控' : p.target;
-    return { eyebrow: `點位 ${n}　${kind}`, title: `${loc}　${loc.includes(t)?'':t}`.trim(), tparts: [loc, loc.includes(t) ? '' : t], groups: [[{ n: '雲端智慧電表', q: p.count }, { n: `${p.phase} 電源控制電表` }].concat(wpQty(p) > 0 ? [{ n: '戶外防水殼', q: wpQty(p) }] : [])] };
+    return { eyebrow: `點位 ${n}　${kind}`, title: `${loc}　${t}–雲端智慧電表×${p.count}(${p.phase})`, tparts: [loc, `${t}–雲端智慧電表×${p.count}(${p.phase})`], groups: [[{ n: '雲端智慧電表', q: p.count }, { n: `${p.phase} 電源控制電表` }].concat(wpQty(p) > 0 ? [{ n: '戶外防水殼', q: wpQty(p) }] : [])] };
   }
   const g = [];
   if (swQ(p, 'sw')) g.push({ n: '電源開關控制器', q: swQ(p, 'sw') });
@@ -434,7 +434,9 @@ function pointHeader(p, i, qrx) {
   if (swQ(p, 'p2')) g.push({ n: '2P 電源控制電表', q: swQ(p, 'p2') });
   const tb = uList(p).filter(u => u.ctl === 'tbd').length; if (tb) g.push({ n: '待決定', q: tb });
   if (wpQty(p) > 0) g.push({ n: '戶外防水殼', q: wpQty(p) });
-  return { eyebrow: `點位 ${n}　${kind}`, title: `${loc}　${loc.includes(p.target||'')?'':p.target}`.trim(), tparts: [loc, loc.includes(p.target||'') ? '' : p.target], groups: g.length ? [g] : [] };
+  const mainEq = g.filter(x => x.n !== '戶外防水殼' && x.n !== '待決定').map(x => x.n.replace(/^([23])P /, '$1P') + '×' + x.q).join('、');
+  const sub = (p.target || '') + (mainEq ? '–' + mainEq : '');
+  return { eyebrow: `點位 ${n}　${kind}`, title: `${loc}　${sub}`, tparts: [loc, sub], groups: g.length ? [g] : [] };
 }
 const specText = g => g.map(grp => grp.map(it => it.n + (it.q ? ` ×${it.q}` : '') + (it.post ? ' ' + it.post : '')).join(' · ')).join('　｜　');
 function pointTitle(p, i, qrx) { const H = pointHeader(p, i, qrx); return [`${i + 1}. ${H.tparts[0]}${H.tparts[1] ? '｜' + H.tparts[1] : ''}`, specText(H.groups)]; }
