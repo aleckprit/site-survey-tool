@@ -1233,7 +1233,9 @@ async function readPhoto(file0) {
     const buf0 = await file0.arrayBuffer(), u8 = new Uint8Array(buf0), end = u8.length > 1 && u8[u8.length - 2] === 0xFF && u8[u8.length - 1] === 0xD9;
     let W = 0, H = 0, prog = false;
     for (let i = 2; i + 9 < Math.min(u8.length, 400000);) { if (u8[i] !== 0xFF) { i++; continue; } const m = u8[i + 1]; if (m >= 0xC0 && m <= 0xCF && ![0xC4, 0xC8, 0xCC].includes(m)) { prog = m === 0xC2; H = u8[i + 5] << 8 | u8[i + 6]; W = u8[i + 7] << 8 | u8[i + 8]; break; } i += 2 + (u8[i + 2] << 8 | u8[i + 3]); }
-    info = `讀到${u8.length}/${file0.size}B ${end ? '結尾完整' : '結尾缺失'} ${W}x${H}${prog ? ' 漸進式' : ''} ${file0.type || '無類型'}`;
+    const hx = [...u8.slice(0, 12)].map(x => x.toString(16).padStart(2, '0')).join(''), asc = String.fromCharCode(...u8.slice(4, 12)).replace(/[^\x20-\x7e]/g, '.');
+    window.__photoHead = hx + ' ' + asc;
+    info = `頭${hx} ${asc} 讀到${u8.length}/${file0.size}B ${end ? '結尾完整' : '結尾缺失'} ${W}x${H}${prog ? ' 漸進式' : ''} ${file0.type || '無類型'}`;
     file = new Blob([u8], { type: file0.type || 'image/jpeg' });
   } catch (e) { info = '複製失敗:' + (e.message || e); }
 
@@ -1286,7 +1288,7 @@ async function readPhoto(file0) {
   const mb = (file0.size / 1048576).toFixed(1);
   window.__photoDiag = `原檔 ${mb}MB · ${info} · ${log.join(' ')}${errs.length ? ' [' + errs.join(' | ') + ']' : ''}`;
   if (!r) throw lastErr || new Error('讀不到照片');
-  if (!log.some(x => x.endsWith('✓'))) window.__photoDiag += ' ⚠ 4 種讀法都疑似不完整';
+  if (!log.some(x => x.endsWith('✓'))) window.__photoDiag += ' ⚠ 4 種讀法都疑似不完整' + (/ftyp|heic|heif|avif|mif1/i.test(window.__photoHead || '') ? ' → 這張是 HEIC/HEIF 格式,瀏覽器讀不了。請把手機相機的格式改成 JPEG(相容性最佳),或先傳 LINE 再下載。' : ' → 這張的檔案格式不是標準 JPEG,請先傳 LINE 再下載,或改拍 JPEG。');
   return { src: r.c.toDataURL('image/jpeg', .8), w: r.w, h: r.h };
 }
 
