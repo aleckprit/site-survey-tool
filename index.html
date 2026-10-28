@@ -828,9 +828,9 @@ async function buildPptx(S, A) {
     const y0 = 2.45;
     lab('設備清單', y0);   // 首頁只放設備清單(同人工報告);各空間的控制/預約在第 2 頁
     const bcell = (t, o) => ({ text: String(t), options: { valign: 'middle', fontSize: cs, color: INK, border: bd(true), ...o } });
-    const rows = [[head('項次'), head('項目', 'left'), head('用量'), head('備註', 'left')]];
-    BOMR.forEach((r, k) => rows.push([bcell(k + 1, { align: 'center', color: MUTED }), bcell(r[0], { align: 'left', bold: true, color: NAVY }), bcell(r[1], { align: 'center', bold: true, color: r[1] > 0 ? ACCENT : GHOST }), bcell(r[2] || '', { align: 'left', color: MUTED, fontSize: Math.max(8, cs - 2) })]));
-    cv.addTable(rows, { fontFace: FONT, margin: [.02, .1, .02, .1], rowH: mRow, x: LM, y: y0 + .32, w: w0, colW: [.6, 3.6, .9, 2.0] });
+    const rows = [[head('項次'), head('項目', 'left'), head('用量')]];
+    BOMR.forEach((r, k) => rows.push([bcell(k + 1, { align: 'center', color: MUTED }), bcell(r[0], { align: 'left', bold: true, color: NAVY }), bcell(r[1], { align: 'center', bold: true, color: r[1] > 0 ? ACCENT : GHOST })]));
+    cv.addTable(rows, { fontFace: FONT, margin: [.02, .1, .02, .1], rowH: mRow, x: LM, y: y0 + .32, w: w0, colW: [.8, 4.7, 1.6] });
     sz = keepSz;
   } else {
   s = null;
@@ -1955,7 +1955,7 @@ function assessSection(p, refit) {
     });
 
     const mats = h('div', { class: 'mats' });
-    p.mats.forEach(m => mats.append(h('div', { class: 'mrow' }, h('span', { class: 'mn' }, m.n),
+    p.mats.filter(m => m.n !== '戶外防水殼').forEach(m => mats.append(h('div', { class: 'mrow' }, h('span', { class: 'mn' }, m.n),
       h('button', { type: 'button', class: 'iconbtn', 'aria-label': '減少', onclick: () => { const was = stat(); m.q = Math.max(1, m.q - 1); changed(was); paint(); } }, '−'),
       h('span', { class: 'val' }, String(m.q)),
       h('button', { type: 'button', class: 'iconbtn', 'aria-label': '增加', onclick: () => { const was = stat(); m.q += 1; changed(was); paint(); } }, '＋'),
