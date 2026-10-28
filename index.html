@@ -317,7 +317,7 @@ const PRESETS = {
 const presetsFor = p => {
   if (p.kind !== 'switch') return PRESETS[p.kind] || [];
   const t = p.target || '冷氣', loc = p.loc || '';
-  const nm = loc && loc.includes(t) ? loc : (loc + t);
+  const nm = t;
   const base = [{ k: 'ac', label: nm, t: nm, w: .14, h: .2 }, { k: 'unit', label: t + '本體(紅框)', t: '', w: .1, h: .22 }, { k: 'box', t: '開關箱', w: .14, h: .2 }];
   if (/冷氣/.test(t)) base.splice(2, 0, { k: 'card', label: '冷氣卡', t: '現場冷氣卡', w: .12, h: .2 });
   return base;
